@@ -11,6 +11,13 @@ namespace renderer {
 // with a digit: D3x2_y2 is 3d_{x^2 - y^2}, F4y_3x2_y2 is 4f_{y(3x^2 - y^2)}.
 //
 // Declared in table order -- n, then l, then m ascending -- which orbitalFor() relies on.
+//
+// Convention: m -> name follows the project's table as given. In the usual real-orbital
+// convention, m < 0 is the sin(|m| phi) combination and m > 0 the cos one. The d row follows
+// it (m -1 = d_yz, m +1 = d_xz) and so do f at m = +/-2, but p and f at odd m are swapped
+// relative to it (the usual convention has p: m -1 = p_y, m +1 = p_x; f: m -3 = y(3x^2-y^2),
+// m -1 = yz^2, m +1 = xz^2, m +3 = x(x^2-3y^2)). Harmless while the enum is only a name;
+// settle it before the wave function picks an angular formula from it.
 enum class Orbital : u32 {
     // n = 1
     S1, // 1s       (l 0, m 0)
