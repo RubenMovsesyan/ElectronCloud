@@ -1,0 +1,17 @@
+IndentWidth: 4
+ColumnLimit: 0
+UseTab: Never
+IndentCaseLabels: true
+IndentCaseBlocks: false
+BreakBeforeBraces: Attach
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+SpaceBeforeCaseColon: false
+BinPackParameters: false
+AllowAllParametersOfDeclarationOnNextLine: false
+AlignAfterOpenBracket: BlockIndent
+PenaltyBreakBeforeFirstCallParameter: 1
+AlwaysBreakAfterReturnType: None
+PointerAlignment: Left
+IndentAccessModifiers: true
+NamespaceIndentation: None

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ElectronCloud — Documentation</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="index.html">Electron<span>Cloud</span></a>
+  <span class="tag">C++23 · GameEngine · Vulkan · Linux</span>
+
+  <h4>overview</h4>
+  <a href="index.html#what">What this is</a>
+  <a href="index.html#layout">Layout</a>
+  <a href="index.html#build">Building</a>
+  <a href="index.html#engine">Working on GameEngine</a>
+</nav>
+
+<main>
+
+<h1>ElectronCloud</h1>
+<p class="lede">An electron cloud renderer: what an electron &ldquo;looks like&rdquo;. Built on GameEngine, which is developed alongside it.</p>
+
+<h2 id="what">What this is</h2>
+<p>
+  Today it is first light only: <code>src/main.cpp</code> opens a window and clears it to
+  yellow through GameEngine&rsquo;s <code>graphics::renderers::ClearRenderer</code> and
+  <code>graphics::Presenter</code>. The electron-cloud renderer will be another
+  implementation of GameEngine&rsquo;s <code>graphics::Renderer</code> concept and replaces
+  <code>ClearRenderer</code> there.
+</p>
+<pre><code>app::Application app{
+    {.width = 1280, .height = 720, .title = "ElectronCloud"},
+    [&amp;](app::Application&amp;) {
+        state.renderer.emplace(kYellow);
+        state.presenter.emplace();
+    },
+    [&amp;](app::Application&amp;) { state.presenter-&gt;present(*state.renderer); },
+    [&amp;](app::Application&amp;) {
+        state.presenter.reset();
+        state.renderer.reset();
+    },
+};
+app.run();</code></pre>
+
+<h2 id="layout">Layout</h2>
+<pre><code>buildcpp/             submodule, the build system (build.hpp)
+build.cpp             the build script
+external/devtools/    submodule, header-only C utilities (rlog.h, common.h, attr.h)
+external/GameEngine/  submodule, the engine, built from source into our binary
+src/                  ElectronCloud's own code
+docs/                 these pages</code></pre>
+
+<h2 id="build">Building</h2>
+<pre><code>git submodule update --init --recursive
+./run           # bootstrap ./build if needed, build, launch
+./run clean     # wipe .build first</code></pre>
+<p>
+  <code>build.cpp</code> compiles GameEngine&rsquo;s sources directly (it does not run the
+  engine&rsquo;s own <code>build.cpp</code>), generates the engine&rsquo;s shader header
+  with the engine&rsquo;s bundled <code>sokol-shdc</code>, and links everything into
+  <code>.build/bin/electron_cloud</code>.
+</p>
+
+<h2 id="engine">Working on GameEngine</h2>
+<p>
+  <code>external/GameEngine</code> is a full clone of
+  <code>RubenMovsesyan/GameEngine</code>. Engine features ElectronCloud needs are written
+  there, following the engine&rsquo;s own <code>AGENTS.md</code> (and its docs), committed
+  inside the submodule, pushed to the engine&rsquo;s remote, then the new submodule pointer
+  is committed here. A new engine source file must be added to both the engine&rsquo;s
+  <code>build.cpp</code> and the <code>engine_sources</code> list in ours.
+</p>
+
+</main>
+</div>
+</body>
+</html>

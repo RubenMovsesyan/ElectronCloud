@@ -1,0 +1,9 @@
+[submodule "buildcpp"]
+	path = buildcpp
+	url = git@github.com:RubenMovsesyan/buildcpp.git
+[submodule "external/devtools"]
+	path = external/devtools
+	url = git@github.com:RubenMovsesyan/devtools.git
+[submodule "external/GameEngine"]
+	path = external/GameEngine
+	url = git@github.com:RubenMovsesyan/GameEngine.git

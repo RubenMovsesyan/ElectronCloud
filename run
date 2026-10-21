@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+cd "$(dirname "$0")"
+if [ "$1" = clean ]; then
+	rm -rf .build
+	shift
+fi
+[ -x ./build ] || clang++ -std=c++23 build.cpp -o build
+./build -j $(nproc)
+exec .build/bin/electron_cloud "$@"
