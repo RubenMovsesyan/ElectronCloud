@@ -83,7 +83,7 @@ struct ElectronCloud {
         f64 simulation_time = 0.0;
 
         renderer::ElectronCloudRenderer renderer{
-            renderer::RaymarchSettings{.step_size = 0.02f, .max_distance = 5.0f, .min_density = 0.001f, .opacity_cutoff = 0.95f},
+            renderer::RaymarchSettings{.step_size = 0.02f, .max_distance = 10.0f, .min_density = 0.001f, .opacity_cutoff = 0.95f},
             renderer::Appearance{
                 .cloud_color = {0.3f, 0.6f, 1.0f},
                 .background_color = {0.02f, 0.02f, 0.03f},

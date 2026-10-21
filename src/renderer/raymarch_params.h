@@ -44,7 +44,7 @@ struct Atom {
 // How rays are marched: quality against speed. Doesn't change what the cloud is.
 struct RaymarchSettings {
     f32 step_size = 0.1f;       // distance advanced per sample
-    f32 max_distance = 5.0f;    // a ray gives up this far from the camera
+    f32 max_distance = 10.0f;   // a ray gives up this far from the camera
     f32 min_density = 0.001f;   // samples at or below this are treated as empty space
     f32 opacity_cutoff = 0.95f; // a ray stops once this opaque; nothing behind it would show
 };
