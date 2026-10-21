@@ -32,7 +32,7 @@ int main(int argc, char** argv) {
     initLog(1024 * 1024);
     RLOG(LL_INFO, "Starting ElectronCloud");
 
-    app::Application<ElectronCloud> app{{.title = "ElectronCloud"}, argc, argv};
+    app::Application<ElectronCloud> app{{.width = 1920, .height = 1080, .title = "ElectronCloud", .resizable = false}, argc, argv};
     app.run();
 
     return 0;
