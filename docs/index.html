@@ -33,19 +33,21 @@
   implementation of GameEngine&rsquo;s <code>graphics::Renderer</code> concept and replaces
   <code>ClearRenderer</code> there.
 </p>
-<pre><code>app::Application app{
-    {.width = 1280, .height = 720, .title = "ElectronCloud"},
-    [&amp;](app::Application&amp;) {
-        state.renderer.emplace(kYellow);
-        state.presenter.emplace();
-    },
-    [&amp;](app::Application&amp;) { state.presenter-&gt;present(*state.renderer); },
-    [&amp;](app::Application&amp;) {
-        state.presenter.reset();
-        state.renderer.reset();
-    },
+<pre><code>struct ElectronCloud {
+    graphics::renderers::ClearRenderer renderer{kYellow};
+    graphics::Presenter presenter;
+
+    explicit ElectronCloud(app::Context&amp;) {}
+    void frame(app::Context&amp;) { presenter.present(renderer); }
 };
+
+app::Application&lt;ElectronCloud&gt; app{{.title = "ElectronCloud"}, argc, argv};
 app.run();</code></pre>
+<p>
+  The app is a State type: <code>app::Application&lt;S&gt;</code> builds it once the GPU is
+  up (its constructor is init), calls <code>frame()</code> every frame, and destroys it
+  before the GPU goes down (its destructor is cleanup).
+</p>
 
 <h2 id="layout">Layout</h2>
 <pre><code>buildcpp/             submodule, the build system (build.hpp)

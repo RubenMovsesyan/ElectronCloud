@@ -55,9 +55,13 @@ GameEngine doesn't yet support everything ElectronCloud needs, so it is develope
 ## Gotchas
 
 - `#define RLOG_IMPLEMENTATION` lives in `src/main.cpp`, exactly once.
-- Engine objects that own GPU handles (renderers, the presenter) are held in
-  `std::optional`: built in the `Application` init callback, after `sg_setup()`, and reset
-  in the cleanup callback, before `sg_shutdown()`.
+- The app is the `ElectronCloud` State in `src/main.cpp`, run by
+  `app::Application<ElectronCloud>`. It must satisfy `app::AppState`: an
+  `explicit ElectronCloud(app::Context&)` (init) and `void frame(app::Context&)`; its
+  destructor is cleanup. The Application builds it after `sg_setup()` and destroys it
+  before `sg_shutdown()`, so GPU-owning members (renderers, the presenter) are plain
+  members. Command-line options are parsed in the constructor from
+  `context.argc()/argv()` with `app::CliParser`.
 - `external/devtools` is ours and is the only devtools on the include path; GameEngine's
   own `external/GameEngine/external/devtools` copy is not used. Keep them on the same
   commit if the engine starts depending on newer devtools.
