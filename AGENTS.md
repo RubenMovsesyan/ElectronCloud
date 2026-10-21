@@ -125,5 +125,9 @@ GameEngine doesn't yet support everything ElectronCloud needs, so it is develope
 - `GAMEENGINE_CUDA` changes the layout of engine classes (`gpu::SharedInstanceBuffer`), and
   buildcpp does not rebuild on flag changes. After toggling it or any other compile flag,
   `./run clean`.
+- An FPS counter (ImGui, through the engine's `DebugUI`) is drawn in the top-left corner as
+  the Presenter's overlay. `DebugUI` starts hidden, so the State's constructor calls
+  `setVisible(true)`. The number is ImGui's 60-frame average; with vsync it caps at the
+  monitor's refresh rate.
 - The window is 1920x1080 with `Config::resizable = false`. On Hyprland that makes it
   float at that size; it is a window-manager hint, not a lock.

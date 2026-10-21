@@ -10,6 +10,8 @@
 
 #include <Eigen/Dense>
 
+#include <imgui.h>
+
 #include <sokol_app.h>
 
 #include <algorithm>
@@ -17,7 +19,7 @@
 #include <cmath>
 
 // ElectronCloud: our own CUDA ray marcher (src/renderer/) plugged into GameEngine's Presenter,
-// with a fly camera marking where the rays start.
+// with a fly camera marking where the rays start and an FPS counter in the top-left corner.
 //
 //   WASD move, Space / Left Ctrl up / down, ESC toggles mouse-look.
 
@@ -34,6 +36,23 @@ const Eigen::Vector3f kWorldUp{0.0f, 1.0f, 0.0f};
 
 f32 aspectOf(const app::Context& context) {
     return context.height() > 0 ? static_cast<f32>(context.width()) / static_cast<f32>(context.height()) : 1.0f;
+}
+
+// A small see-through panel pinned to the top-left corner. ImGui's Framerate is averaged over
+// the last 60 frames, so the number is steady enough to read.
+void drawFpsCounter() {
+    constexpr f32 kMargin = 10.0f;
+    constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                                        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove |
+                                        ImGuiWindowFlags_NoInputs;
+
+    ImGui::SetNextWindowPos(ImVec2(kMargin, kMargin));
+    ImGui::SetNextWindowBgAlpha(0.35f);
+    if (ImGui::Begin("FPS", nullptr, kFlags)) {
+        const f32 fps = ImGui::GetIO().Framerate;
+        ImGui::Text("%.0f FPS  (%.2f ms)", fps, fps > 0.0f ? 1000.0f / fps : 0.0f);
+    }
+    ImGui::End();
 }
 
 // The app's State. app::Application builds it once the GPU is up and destroys it before the
@@ -53,7 +72,10 @@ struct ElectronCloud {
         std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
 
         explicit ElectronCloud(app::Context& context)
-            : camera(kFovY, aspectOf(context), 0.1f, 100.0f, Eigen::Vector3f{0.0f, 0.0f, 3.0f}, Eigen::Vector3f{0.0f, 0.0f, -1.0f}, kWorldUp) {}
+            : camera(kFovY, aspectOf(context), 0.1f, 100.0f, Eigen::Vector3f{0.0f, 0.0f, 3.0f}, Eigen::Vector3f{0.0f, 0.0f, -1.0f}, kWorldUp) {
+            // DebugUI starts hidden; the FPS counter is always on.
+            context.debugUI().setVisible(true);
+        }
 
         void frame(app::Context& context) {
             const auto now = std::chrono::steady_clock::now();
@@ -68,7 +90,9 @@ struct ElectronCloud {
 
             renderer.beginFrame(camera);
             renderer.submit(sphere);
-            presenter.present(renderer);
+            presenter.present(renderer, [&]() {
+                context.debugUI().draw(context.width(), context.height(), dt, sapp_dpi_scale(), drawFpsCounter);
+            });
         }
 
         // Same controls as GameEngine's sandboxes.
