@@ -10,7 +10,9 @@
 // a source file, add it to engine_sources here too.
 //
 // CUDA is required: the renderer (src/renderer/) runs CUDA kernels. Only the Driver API
-// (libcuda) is linked; nvcc compiles each .cu to PTX that the renderer JIT-loads at runtime.
+// (libcuda) is linked. Kernels are compiled to PTX by clang's own CUDA support -- no nvcc --
+// and the renderer JIT-loads the PTX at runtime. clang still uses the CUDA toolkit's headers
+// and libdevice (the device math library), so the toolkit must be installed.
 
 const std::string BUILD_DIR = ".build";
 const std::string ENGINE = "external/GameEngine";
@@ -70,8 +72,11 @@ int main(int argc, char** argv) {
     app.addInclude(Include<Direct>(cuda_dir + "/include"));
     app.addLink(Link<Dependency>("cuda"));
 
-    // .cu -> .build/cuda/<stem>.ptx. A Command Output is always considered stale, so only add
-    // the Task when the PTX is missing or older than its source. sm_89 = RTX 40-series.
+    // .cu -> .build/cuda/<stem>.ptx, device code only (--cuda-device-only -S). A Command Output
+    // is always considered stale, so only add the Task when the PTX is missing or older than
+    // its source. sm_89 = RTX 40-series. clang warns when the toolkit is newer than the newest
+    // CUDA version it knows (-Wunknown-cuda-version); it has worked so far, so that warning is
+    // off -- if a toolkit upgrade breaks the kernel build, this is the first place to look.
     const std::vector<std::string> cuda_kernels = {
         "src/renderer/electron_cloud_renderer.cu",
     };
@@ -91,7 +96,9 @@ int main(int argc, char** argv) {
             stale = stale || std::filesystem::last_write_time(header) > std::filesystem::last_write_time(ptx);
         }
         if (stale) {
-            app.addTask(Output(Command({cuda_dir + "/bin/nvcc", "--ptx", "-arch=sm_89", "-O3", "-Isrc", "-Iexternal/devtools", cuda_source, "-o", ptx})));
+            app.addTask(Output(Command({"clang++", "-x", "cuda", "--cuda-path=" + cuda_dir, "--cuda-gpu-arch=sm_89", "--cuda-device-only",
+                                        "-S", "-O3", "-std=c++23", "-Wno-unknown-cuda-version", "-Isrc", "-Iexternal/devtools",
+                                        "-I" + ENGINE + "/external/Eigen", cuda_source, "-o", ptx})));
         }
     }
 

@@ -2,6 +2,8 @@
 
 #include <rlog.h>
 
+#include <Eigen/Dense>
+
 #include <sokol_gfx.h>
 
 #include <vulkan/vulkan.h>
@@ -18,17 +20,11 @@ namespace renderer {
 
 namespace {
 
-// Written by build.cpp's nvcc step; relative to the project root, where ./run starts us.
+// Written by build.cpp's clang CUDA step; relative to the project root, where ./run starts us.
 constexpr const char* kPtxPath = ".build/cuda/electron_cloud_renderer.ptx";
 
 constexpr sg_pixel_format kOutputFormat = SG_PIXELFORMAT_RGBA8;
 constexpr u32 kBlock = 16; // 16 x 16 threads per CUDA block
-
-void store3(f32 out[3], const Eigen::Vector3f& v) {
-    out[0] = v.x();
-    out[1] = v.y();
-    out[2] = v.z();
-}
 
 } // namespace
 
@@ -94,21 +90,6 @@ void ElectronCloudRenderer::waitIdle() {
     }
 }
 
-void ElectronCloudRenderer::setSettings(const RaymarchSettings& settings) {
-    RayMarch& out = m_params.march;
-    out.step_size = settings.step_size;
-    out.max_distance = settings.max_distance;
-    out.min_density = settings.min_density;
-    out.opacity_cutoff = settings.opacity_cutoff;
-}
-
-void ElectronCloudRenderer::setAppearance(const Appearance& appearance) {
-    RayAppearance& out = m_params.appearance;
-    store3(out.cloud_color, appearance.cloud_color);
-    store3(out.background_color, appearance.background_color);
-    out.absorption = appearance.absorption;
-}
-
 void ElectronCloudRenderer::beginFrame(const graphics::primitives::scene::Camera& camera, f64 time) {
     m_params.time = time;
 
@@ -118,32 +99,18 @@ void ElectronCloudRenderer::beginFrame(const graphics::primitives::scene::Camera
     const Eigen::Vector3f up = right.cross(forward);
 
     RayCamera& out = m_params.camera;
-    store3(out.position, camera.position());
-    store3(out.forward, forward);
-    store3(out.right, right);
-    store3(out.up, up);
+    out.position = camera.position();
+    out.forward = forward;
+    out.right = right;
+    out.up = up;
     // Camera keeps its vertical fov private; the projection's [1][1] is 1 / tan(fov_y / 2).
     out.tan_half_fov_y = 1.0f / camera.projectionMatrix()(1, 1);
     out.aspect = camera.aspectRatio();
 }
 
 void ElectronCloudRenderer::submit(const Atom& atom) {
-    RayAtom& out = m_params.atom;
-    store3(out.nucleus, atom.nucleus);
-    out.nuclear_charge = atom.nuclear_charge;
-    out.bohr_radius = atom.bohr_radius;
-    out.bounds_radius = atom.bounds_radius;
-    out.state_count = std::clamp<u32>(atom.state_count, 1, static_cast<u32>(atom.states.size()));
-    for (usize i = 0; i < atom.states.size(); i++) {
-        const QuantumState& state = atom.states[i];
-        out.states[i] = RayQuantumState{
-            .n = state.n,
-            .l = state.l,
-            .m = state.m,
-            .amplitude = state.amplitude,
-            .phase = state.phase,
-        };
-    }
+    m_params.atom = atom;
+    m_params.atom.state_count = std::clamp<u32>(atom.state_count, 1, static_cast<u32>(atom.states.size()));
 }
 
 bool ElectronCloudRenderer::rebuildTargets(int width, int height) {

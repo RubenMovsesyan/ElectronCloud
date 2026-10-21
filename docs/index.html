@@ -100,9 +100,10 @@ void frame(app::Context&amp; context) {
 <p>
   The renderer also takes <code>RaymarchSettings</code> (<code>step_size</code>,
   <code>max_distance</code>, <code>min_density</code>, <code>opacity_cutoff</code>) and a purely
-  cosmetic <code>Appearance</code> (cloud colour, background colour, absorption). Each C++
-  type is mirrored by a plain-C <code>Ray*</code> struct in <code>raymarch_params.h</code>,
-  which is what the kernel receives.
+  cosmetic <code>Appearance</code> (cloud colour, background colour, absorption). All of these
+  live in <code>raymarch_params.h</code> and are the same types on the CPU and in the CUDA
+  kernel (Eigen included); the kernel receives them by value in one
+  <code>RaymarchParams</code>.
 </p>
 <p>
   Every frame the <code>raymarch</code> kernel (<code>electron_cloud_renderer.cu</code>)
@@ -111,12 +112,11 @@ void frame(app::Context&amp; context) {
   cloud&rsquo;s density. That is where |&psi;(r, t)|&sup2; will go; for now it is a hard-coded
   test sphere, 1 at the centre falling linearly to 0 at radius 1:
 </p>
-<pre><code>__device__ f32 checkRay(float3 position, const RayAtom&amp; atom, f64 time) {
+<pre><code>__device__ f32 checkRay(const Vector3f&amp; position, const Atom&amp; atom, f64 time) {
     (void)atom;
     (void)time;
     constexpr f32 kTestRadius = 1.0f;
-    const f32 distance = sqrtf(dot(position, position));
-    return fmaxf(0.0f, 1.0f - distance / kTestRadius);
+    return fmaxf(0.0f, 1.0f - position.norm() / kTestRadius);
 }</code></pre>
 <p>
   Each sample absorbs light (Beer-Lambert) and is blended front to back, so the cloud
@@ -124,10 +124,9 @@ void frame(app::Context&amp; context) {
   reaches <code>opacity_cutoff</code>.
 </p>
 <pre><code>const f32 alpha = 1.0f - expf(-density * march.step_size * appearance.absorption);
-const float3 sample_color = cloud_color * density;
 
 const f32 transmittance = 1.0f - accumulated_opacity;
-accumulated_color = accumulated_color + sample_color * (transmittance * alpha);
+accumulated_color += appearance.cloud_color * (density * transmittance * alpha);
 accumulated_opacity += transmittance * alpha;</code></pre>
 <p>
   CUDA can only share <strong>buffers</strong> with Vulkan in this engine, not images, so the

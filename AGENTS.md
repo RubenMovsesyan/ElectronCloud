@@ -46,8 +46,19 @@ line to `sources` (ours) or `engine_sources` (engine) -- there is no globbing.
 
 CUDA: `build.cpp` defines `GAMEENGINE_CUDA` for every source (ours and the engine's, which
 switches on `src/gpu/cuda_interop.*`), links the Driver API (`libcuda`) only, and compiles
-each file in `cuda_kernels` with `nvcc --ptx -arch=sm_89` to `.build/cuda/<stem>.ptx`. A new
-`.cu` file means a new line in `cuda_kernels`. The renderer loads its PTX at runtime with
+each file in `cuda_kernels` to `.build/cuda/<stem>.ptx` with **clang's own CUDA support**
+(`clang++ -x cuda --cuda-gpu-arch=sm_89 --cuda-device-only -S`) -- nvcc is not used. clang
+still needs the CUDA toolkit's headers and libdevice (the device math library behind
+`expf`, `sqrtf`, ...), found through `--cuda-path`. A new `.cu` file means a new line in
+`cuda_kernels`.
+
+Why clang, not nvcc: one compiler for host and device code (same C++23, same struct
+layout rules); `constexpr` functions are usable on the device without nvcc's
+`--expt-relaxed-constexpr`, so Eigen and `std::array` work in kernels with no flags or
+warnings; and on the raymarch kernel it was ~15-20% faster than nvcc's PTX. The cost:
+clang lags new CUDA releases. It officially knows CUDA up to 13.2 while the installed
+toolkit is 13.4, so `-Wno-unknown-cuda-version` hides that warning. If a toolkit upgrade
+breaks the kernel build, check that first. The renderer loads its PTX at runtime with
 `cuModuleLoad` from a path relative to the project root, so run from there (`./run` does).
 
 ## The renderer
@@ -63,10 +74,10 @@ It is a CUDA ray marcher through an electron cloud. The State (`ElectronCloud` i
 `renderer.beginFrame(camera, simulation_time)`, `renderer.submit(atom)`, then
 `presenter.present(renderer, overlay)`.
 
-What the renderer is given (C++ types in `electron_cloud_renderer.hpp`, each mirrored by a
-plain-C `Ray*` struct in `raymarch_params.h` that the kernel receives):
+What the renderer is given -- one set of types in `raymarch_params.h`, shared by `main.cpp`,
+the C++ renderer and the kernel (no mirror structs, no conversion code):
 
-- `Atom` / `RayAtom`: everything the density depends on. Nucleus position, nuclear charge
+- `Atom`: everything the density depends on. Nucleus position, nuclear charge
   `Z`, `bohr_radius` (world units per Bohr radius -- the cloud's size on screen),
   `bounds_radius` (density is 0 outside; rays are only marched inside it), and up to two
   `QuantumState`s `|n l m>` with a complex weight `amplitude * e^(i * phase)`. Two states
@@ -75,9 +86,9 @@ plain-C `Ray*` struct in `raymarch_params.h` that the kernel receives):
 - Simulation time: `f64`, in atomic units of time (hbar / E_h ~= 2.419e-17 s), advanced
   by the State at `kAtomicTimePerSecond` per real second (10 today; real time would be
   ~4.1e16). `f64` so the phases stay exact as it grows.
-- `RaymarchSettings` / `RayMarch`: `step_size`, `max_distance`, `min_density`,
+- `RaymarchSettings`: `step_size`, `max_distance`, `min_density`,
   `opacity_cutoff` -- quality against speed.
-- `Appearance` / `RayAppearance`: cloud colour, background colour, absorption -- purely
+- `Appearance`: cloud colour, background colour, absorption -- purely
   cosmetic.
 
 The wave function is not in yet: `checkRay()` takes the atom and the time but still returns
@@ -103,13 +114,16 @@ a hard-coded test sphere (centre 0, radius 1, density 1 at the centre falling li
   is blended front to back with `cloud_color * density`; the ray stops early at
   `opacity_cutoff`, samples at or below `min_density` are skipped, and leftover light shows
   `background_color`.
-- Kernel code uses `f32` from `common.h` (nvcc gets `-Iexternal/devtools`), not `float`;
-  CUDA's own vector types (`float3`) stay as they are.
-- `raymarch_params.h` is plain C data (`f32`s, unsigneds) passed by value to
-  `cuLaunchKernel`; keep it free of Eigen and CUDA vector types so both compilers agree on
-  its layout. `static_assert`s at the end of the header pin every struct's size (and the
-  `f64 time` offset); both compilers check them, so a layout disagreement fails the build.
-  Update them when a field changes. Headers the kernels include are listed in
+- Kernel code uses `f32` / `u32` / ... from `common.h`, not `float`, and Eigen
+  (`Eigen::Vector3f`, `.dot()`, `.norm()`, `.normalized()`) for vector maths -- the same
+  types as the host side.
+- `raymarch_params.h` (namespace `renderer`) is passed by value to `cuLaunchKernel`
+  (`RaymarchParams`), so host and device must lay it out identically. Stick to `common.h`
+  scalars, `Eigen::Vector3f` (three packed `f32`, no alignment) and `std::array` of those.
+  **No 16-byte-aligned Eigen types** (`Vector4f`, `Matrix4f`) -- they would move fields.
+  `static_assert`s at the end of the header pin every struct's size (and the `f64 time`
+  offset); the host and device passes both check them, so a layout disagreement fails the
+  build. Update them when a field changes. Headers the kernels include are listed in
   `cuda_headers` in `build.cpp` so a change to them rebuilds the PTX.
 - `CudaInterop` has no unmap: a resize leaks the old pixel buffer's CUDA import until the
   renderer is destroyed. The window is a fixed size, so this does not happen today.
