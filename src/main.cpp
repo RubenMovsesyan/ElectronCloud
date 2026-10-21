@@ -69,12 +69,13 @@ struct ElectronCloud {
         f32 pitch = 0.0f;
 
         // The atom whose electron cloud is drawn: hydrogen in its ground state, |1 0 0>, at the
-        // origin. (The renderer still draws a test sphere; the wave function isn't in yet.)
+        // origin. One world unit is one angstrom: a0 = 0.529 A.
         renderer::Atom atom{
             .nucleus = Eigen::Vector3f::Zero(),
             .nuclear_charge = 1.0f,
-            .bohr_radius = 0.1f,
-            .bounds_radius = 1.5f,
+            .bohr_radius = 0.529f,
+            // 1s density falls below min_density (0.001) at ~2.0 A; leave some margin.
+            .bounds_radius = 2.5f,
             .states = {renderer::QuantumState{.n = 1, .l = 0, .m = 0, .amplitude = 1.0f, .phase = 0.0f}},
             .state_count = 1,
         };

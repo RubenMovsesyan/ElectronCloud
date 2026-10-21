@@ -85,6 +85,7 @@ int main(int argc, char** argv) {
     // layout on one side only would be read as garbage).
     const std::vector<std::string> cuda_headers = {
         "src/renderer/raymarch_params.h",
+        "src/renderer/orbital.hpp",
     };
     Command mkdir_cuda({"mkdir", "-p", BUILD_DIR + "/cuda"});
     mkdir_cuda.exec();

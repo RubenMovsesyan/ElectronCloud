@@ -35,8 +35,8 @@ struct QuantumState {
 struct Atom {
     Eigen::Vector3f nucleus = Eigen::Vector3f::Zero(); // world space
     f32 nuclear_charge = 1.0f;                          // Z: 1 = hydrogen; hydrogen-like ions above that
-    f32 bohr_radius = 0.1f;                             // world units per Bohr radius -- the cloud's size on screen
-    f32 bounds_radius = 1.5f;                           // world units around the nucleus; density is 0 outside
+    f32 bohr_radius = 0.529f;                           // world units per Bohr radius; 0.529 = world units are angstroms
+    f32 bounds_radius = 2.5f;                           // world units around the nucleus; density is 0 outside
     std::array<QuantumState, 2> states{};
     u32 state_count = 1; // 1 or 2
 };

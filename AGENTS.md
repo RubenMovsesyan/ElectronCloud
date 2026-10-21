@@ -98,8 +98,17 @@ declared in n, l, m order, which the lookup's index formula relies on. m -> real
 follows the usual convention (m < 0 = sin(|m| phi), m > 0 = cos(|m| phi): m -1 is p_y,
 m +1 is p_x, and so on -- see the header); the wave function must use the same one.
 
-The wave function is not in yet: `checkRay()` takes the atom and the time but still returns
-a hard-coded test sphere (centre 0, radius 1, density 1 at the centre falling linearly to 0).
+The wave function, so far: `checkRay(position, atom, time)` converts the sample to
+spherical coordinates around the nucleus (`r`, polar `theta` from +z, azimuth `phi`), looks
+up the orbital of `atom.states[0]` with `orbitalFor`, and switches on it. Only `S1` is
+implemented: `|psi_100|^2 = e^(-2r/a) / (pi a^3)` with `a = bohr_radius / nuclear_charge`
+(world units; integrates to 1). Every other orbital, and invalid quantum numbers, is
+density 0. Not handled yet: `states[1]` / superpositions, `amplitude`, `phase`, and `time`
+(a single stationary state's density doesn't change with time).
+
+World units are angstroms: `main.cpp` sets `bohr_radius = 0.529`. The 1s density peaks at
+~2.15 at the nucleus and drops below `min_density` (0.001) at ~2.0 A, so `bounds_radius`
+is 2.5.
 
 - CUDA runs **inside the renderer, on the render thread** -- no worker. The constructor
   makes a `gpu::CudaInterop` (a CUDA context on the GPU sokol's Vulkan device uses) and

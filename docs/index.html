@@ -30,8 +30,8 @@
 <p>
   <code>src/main.cpp</code> opens a fixed 1920&times;1080 window and draws ElectronCloud&rsquo;s
   own <a href="#renderer">renderer</a> through GameEngine&rsquo;s <code>graphics::Presenter</code>.
-  The renderer is a CUDA ray marcher through an electron cloud. Its inputs describe a whole
-  atom, but the wave function isn&rsquo;t in yet, so it still draws a test sphere.
+  The renderer is a CUDA ray marcher through an electron cloud. It draws hydrogen&rsquo;s 1s
+  orbital; the other orbitals aren&rsquo;t in yet. One world unit is one &aring;ngstr&ouml;m.
 </p>
 <pre><code>app::Application&lt;ElectronCloud&gt; app{
     {.width = 1920, .height = 1080, .title = "ElectronCloud", .resizable = false}, argc, argv};
@@ -109,14 +109,21 @@ void frame(app::Context&amp; context) {
   Every frame the <code>raymarch</code> kernel (<code>electron_cloud_renderer.cu</code>)
   marches one ray per pixel through the part of the atom&rsquo;s bounds the ray crosses,
   <code>step_size</code> at a time. At every sample <code>checkRay()</code> returns the
-  cloud&rsquo;s density. That is where |&psi;(r, t)|&sup2; will go; for now it is a hard-coded
-  test sphere, 1 at the centre falling linearly to 0 at radius 1:
+  cloud&rsquo;s density, |&psi;|&sup2;. It converts the sample to spherical coordinates around
+  the nucleus, looks up the orbital from the quantum numbers, and switches on it. Only 1s
+  is implemented; anything else is empty space for now:
 </p>
 <pre><code>__device__ f32 checkRay(const Vector3f&amp; position, const Atom&amp; atom, f64 time) {
-    (void)atom;
-    (void)time;
-    constexpr f32 kTestRadius = 1.0f;
-    return fmaxf(0.0f, 1.0f - position.norm() / kTestRadius);
+    const Spherical point = toSpherical(position - atom.nucleus);
+    const f32 a = atom.bohr_radius / atom.nuclear_charge;
+
+    const QuantumState&amp; state = atom.states[0];
+    switch (orbitalFor(state.n, state.l, state.m).value_or(Orbital::Count)) {
+        case Orbital::S1:
+            return density1s(point, a);   // e^(-2r/a) / (pi a^3)
+        default:
+            return 0.0f;
+    }
 }</code></pre>
 <p>
   Each sample absorbs light (Beer-Lambert) and is blended front to back, so the cloud
