@@ -101,7 +101,7 @@ int main(int argc, char** argv) {
         "src/assets/loaders/gltf.cpp",
         "src/assets/loaders/image.cpp",
 
-        "src/app/application.cpp",
+        "src/app/context.cpp",
         "src/app/cli_parser.cpp",
         "src/app/input_state.cpp",
         "src/app/debug_ui.cpp",

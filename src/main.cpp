@@ -7,8 +7,6 @@
 
 #include <sokol_gfx.h>
 
-#include <optional>
-
 // First light: a window cleared to solid yellow through GameEngine's ClearRenderer and
 // Presenter. Proves the engine submodule builds, the window opens, and frames present.
 // The electron-cloud renderer replaces ClearRenderer here.
@@ -17,30 +15,21 @@ namespace {
 
 constexpr sg_color kYellow = {1.0f, 1.0f, 0.0f, 1.0f};
 
-struct State {
-        // optional: both own GPU handles, so they are built after sg_setup() (init) and
-        // released before sg_shutdown() (cleanup).
-        std::optional<graphics::renderers::ClearRenderer> renderer;
-        std::optional<graphics::Presenter> presenter;
+// The app's State. app::Application builds it once the GPU is up and destroys it before the
+// GPU goes down, so members holding GPU handles are plain members.
+struct ElectronCloud {
+        graphics::renderers::ClearRenderer renderer{kYellow};
+        graphics::Presenter presenter;
+
+        explicit ElectronCloud(app::Context&) {}
+
+        void frame(app::Context&) { presenter.present(renderer); }
 };
 
 } // namespace
 
-int main() {
-    State state;
-
-    app::Application app{
-        {.width = 1280, .height = 720, .title = "ElectronCloud"},
-        [&](app::Application&) {
-            state.renderer.emplace(kYellow);
-            state.presenter.emplace();
-        },
-        [&](app::Application&) { state.presenter->present(*state.renderer); },
-        [&](app::Application&) {
-            state.presenter.reset();
-            state.renderer.reset();
-        },
-    };
+int main(int argc, char** argv) {
+    app::Application<ElectronCloud> app{{.title = "ElectronCloud"}, argc, argv};
     app.run();
 
     return 0;
