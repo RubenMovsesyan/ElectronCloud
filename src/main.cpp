@@ -29,6 +29,9 @@ struct ElectronCloud {
 } // namespace
 
 int main(int argc, char** argv) {
+    initLog(1024 * 1024);
+    RLOG(LL_INFO, "Starting ElectronCloud");
+
     app::Application<ElectronCloud> app{{.title = "ElectronCloud"}, argc, argv};
     app.run();
 
