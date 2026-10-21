@@ -87,7 +87,7 @@ struct ElectronCloud {
             renderer::Appearance{
                 .cloud_color = {0.3f, 0.6f, 1.0f},
                 .background_color = {0.02f, 0.02f, 0.03f},
-                .absorption = 10.0f,
+                .absorption = 5.0f,
             },
         };
         graphics::Presenter presenter;
