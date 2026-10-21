@@ -3,22 +3,16 @@
 
 #include <app/application.hpp>
 #include <graphics/presenter.hpp>
-#include <graphics/renderers/clear_renderer.hpp>
+#include <renderer/electron_cloud_renderer.hpp>
 
-#include <sokol_gfx.h>
-
-// First light: a window cleared to solid yellow through GameEngine's ClearRenderer and
-// Presenter. Proves the engine submodule builds, the window opens, and frames present.
-// The electron-cloud renderer replaces ClearRenderer here.
+// ElectronCloud: our own renderer (src/renderer/) plugged into GameEngine's Presenter.
 
 namespace {
-
-constexpr sg_color kYellow = {1.0f, 1.0f, 0.0f, 1.0f};
 
 // The app's State. app::Application builds it once the GPU is up and destroys it before the
 // GPU goes down, so members holding GPU handles are plain members.
 struct ElectronCloud {
-        graphics::renderers::ClearRenderer renderer{kYellow};
+        renderer::ElectronCloudRenderer renderer;
         graphics::Presenter presenter;
 
         explicit ElectronCloud(app::Context&) {}

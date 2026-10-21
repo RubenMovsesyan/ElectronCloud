@@ -12,13 +12,16 @@ external/             one dependency per directory, each a git submodule
   devtools/           header-only C utilities: rlog.h, common.h (u32, f32, ...), attr.h
   GameEngine/         the engine, cloned from its remote, with its own submodules (--recursive)
 src/                  ElectronCloud's own code; src/main.cpp is the entry point
+  renderer/           ElectronCloudRenderer (C++ + its CUDA kernels in .cu files)
 docs/                 HTML docs (dark mode), docs/index.html is the overview
 ```
 
 ## Building
 
 Needs what GameEngine needs: `vulkan-headers`, `vulkan-validation-layers`, and X11
-development headers (`libx11`, `libxi`, `libxcursor`).
+development headers (`libx11`, `libxi`, `libxcursor`). Plus the **CUDA toolkit**, which is
+required: `build.cpp` looks in `CUDA_PATH`, `/opt/cuda`, `/usr/local/cuda` and stops if it
+finds none.
 
 ```sh
 git submodule update --init --recursive   # after cloning
@@ -35,12 +38,34 @@ own `build.cpp` is never run. Its `engine_sources` list mirrors the one in
 engine's bundled `sokol-shdc` into `.build/shaders/`. Adding a source file means adding a
 line to `sources` (ours) or `engine_sources` (engine) -- there is no globbing.
 
+CUDA: `build.cpp` defines `GAMEENGINE_CUDA` for every source (ours and the engine's, which
+switches on `src/gpu/cuda_interop.*`), links the Driver API (`libcuda`) only, and compiles
+each file in `cuda_kernels` with `nvcc --ptx -arch=sm_89` to `.build/cuda/<stem>.ptx`. A new
+`.cu` file means a new line in `cuda_kernels`. The renderer loads its PTX at runtime with
+`cuModuleLoad` from a path relative to the project root, so run from there (`./run` does).
+
+## The renderer
+
+`renderer::ElectronCloudRenderer` (`src/renderer/`) is deliberately **not** in GameEngine:
+it is specific to this project. It plugs into the engine through the `graphics::Renderer`
+concept (`sg_view render(int width, int height)`) and is drawn by `graphics::Presenter`
+like any engine renderer.
+
+- CUDA runs **inside the renderer, on the render thread**. The constructor makes a
+  `gpu::CudaInterop` (a CUDA context on the GPU sokol's Vulkan device uses, current on the
+  calling thread) and loads `electron_cloud_renderer.ptx`. No worker thread.
+- CUDA can only share **buffers** with sokol/Vulkan, not images: the engine's sokol fork
+  exports buffer memory (`gpu::ExternalBuffer`, vertex + storage usage) and nothing else.
+  So CUDA cannot write a texture directly; pixels have to go through a buffer.
+- The pixel path is not built yet: `render()` clears to yellow (an internal
+  `ClearRenderer`), and the constructor runs a smoke-test kernel and logs the result.
+
 ## Working on GameEngine
 
 GameEngine doesn't yet support everything ElectronCloud needs, so it is developed here too.
 
-- **Engine features go in the engine, not here.** A renderer, a pass, a scene type -- if it
-  is reusable, write it in `external/GameEngine/src/` following
+- **Engine features go in the engine, not here.** A pass, a scene type, interop
+  plumbing -- if it is reusable, write it in `external/GameEngine/src/` following
   `external/GameEngine/AGENTS.md` (no virtual functions in `gpu/`/`graphics/`, a docs page
   per module, etc.). ElectronCloud's `src/` holds only what is specific to electrons.
 - A new engine source file goes in **both** `external/GameEngine/build.cpp` and our
@@ -65,4 +90,8 @@ GameEngine doesn't yet support everything ElectronCloud needs, so it is develope
 - `external/devtools` is ours and is the only devtools on the include path; GameEngine's
   own `external/GameEngine/external/devtools` copy is not used. Keep them on the same
   commit if the engine starts depending on newer devtools.
-- No CUDA here (yet): `cuda_interop.cpp` compiles to nothing without `GAMEENGINE_CUDA`.
+- `GAMEENGINE_CUDA` changes the layout of engine classes (`gpu::SharedInstanceBuffer`), and
+  buildcpp does not rebuild on flag changes. After toggling it or any other compile flag,
+  `./run clean`.
+- The window is 1920x1080 with `Config::resizable = false`. On Hyprland that makes it
+  float at that size; it is a window-manager hint, not a lock.

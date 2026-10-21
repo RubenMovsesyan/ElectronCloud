@@ -1,5 +1,6 @@
 #include "buildcpp/build.hpp"
 
+#include <cstdlib>
 #include <functional>
 #include <vector>
 
@@ -7,6 +8,9 @@
 // it straight into one binary -- no separate engine library. GameEngine's own build.cpp is
 // not run; the engine sources and include paths below mirror it, so when the engine gains
 // a source file, add it to engine_sources here too.
+//
+// CUDA is required: the renderer (src/renderer/) runs CUDA kernels. Only the Driver API
+// (libcuda) is linked; nvcc compiles each .cu to PTX that the renderer JIT-loads at runtime.
 
 const std::string BUILD_DIR = ".build";
 const std::string ENGINE = "external/GameEngine";
@@ -45,6 +49,43 @@ int main(int argc, char** argv) {
     app.addLink(Link<Dependency>("dl"));
     app.addLink(Link<Dependency>("m"));
 
+    // CUDA: probe CUDA_PATH, then the usual install dirs. GAMEENGINE_CUDA also switches on
+    // the engine's interop code (src/gpu/cuda_interop.*).
+    std::string cuda_dir;
+    {
+        const char* env_cuda_path = std::getenv("CUDA_PATH");
+        const std::vector<std::string> candidates = {env_cuda_path ? env_cuda_path : "", "/opt/cuda", "/usr/local/cuda"};
+        for (const std::string& candidate : candidates) {
+            if (!candidate.empty() && std::filesystem::exists(std::filesystem::path(candidate) / "include" / "cuda.h")) {
+                cuda_dir = candidate;
+                break;
+            }
+        }
+    }
+    if (cuda_dir.empty()) {
+        RLOG(LL_ERROR, "CUDA toolkit not found (set CUDA_PATH) -- ElectronCloud's renderer needs it");
+        return 1;
+    }
+    app.addCompileFlag("-DGAMEENGINE_CUDA");
+    app.addInclude(Include<Direct>(cuda_dir + "/include"));
+    app.addLink(Link<Dependency>("cuda"));
+
+    // .cu -> .build/cuda/<stem>.ptx. A Command Output is always considered stale, so only add
+    // the Task when the PTX is missing or older than its source. sm_89 = RTX 40-series.
+    const std::vector<std::string> cuda_kernels = {
+        "src/renderer/electron_cloud_renderer.cu",
+    };
+    Command mkdir_cuda({"mkdir", "-p", BUILD_DIR + "/cuda"});
+    mkdir_cuda.exec();
+    for (const std::string& cuda_source : cuda_kernels) {
+        const std::string ptx = BUILD_DIR + "/cuda/" + std::filesystem::path(cuda_source).stem().string() + ".ptx";
+        const bool stale = !std::filesystem::exists(ptx) ||
+                           std::filesystem::last_write_time(cuda_source) > std::filesystem::last_write_time(ptx);
+        if (stale) {
+            app.addTask(Output(Command({cuda_dir + "/bin/nvcc", "--ptx", "-arch=sm_89", "-O3", cuda_source, "-o", ptx})));
+        }
+    }
+
     // The engine's shaders -> one sokol-shdc generated header carrying the SPIR-V for every
     // program. A Command Output is always considered stale, so only add the Task when the
     // header is missing or older than its source.
@@ -59,8 +100,7 @@ int main(int argc, char** argv) {
                                                    "-o", shader_header, "-l", "spirv_vk", "-f", "sokol"})));
     }
 
-    // Mirror of engine_sources in external/GameEngine/build.cpp. No CUDA: cuda_interop.cpp
-    // is fully #ifdef GAMEENGINE_CUDA and compiles to nothing.
+    // Mirror of engine_sources in external/GameEngine/build.cpp.
     const std::vector<std::string> engine_sources = {
         "src/gpu/sokol.cpp",
         "src/gpu/handle.cpp",
@@ -110,6 +150,7 @@ int main(int argc, char** argv) {
     // ElectronCloud's own sources. Adding a file means adding a line here -- no globbing.
     const std::vector<std::string> sources = {
         "src/main.cpp",
+        "src/renderer/electron_cloud_renderer.cpp",
     };
 
     std::vector<std::reference_wrapper<Task>> objects;

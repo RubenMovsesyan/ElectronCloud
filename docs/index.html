@@ -17,6 +17,7 @@
   <a href="index.html#what">What this is</a>
   <a href="index.html#layout">Layout</a>
   <a href="index.html#build">Building</a>
+  <a href="index.html#renderer">The renderer</a>
   <a href="index.html#engine">Working on GameEngine</a>
 </nav>
 
@@ -27,26 +28,18 @@
 
 <h2 id="what">What this is</h2>
 <p>
-  Today it is first light only: <code>src/main.cpp</code> opens a window and clears it to
-  yellow through GameEngine&rsquo;s <code>graphics::renderers::ClearRenderer</code> and
-  <code>graphics::Presenter</code>. The electron-cloud renderer will be another
-  implementation of GameEngine&rsquo;s <code>graphics::Renderer</code> concept and replaces
-  <code>ClearRenderer</code> there.
+  <code>src/main.cpp</code> opens a fixed 1920&times;1080 window and draws ElectronCloud&rsquo;s
+  own <a href="#renderer">renderer</a> through GameEngine&rsquo;s <code>graphics::Presenter</code>.
+  The renderer brings CUDA up and runs a smoke-test kernel; its output is still a solid
+  yellow clear until the pixel path is built.
 </p>
-<pre><code>struct ElectronCloud {
-    graphics::renderers::ClearRenderer renderer{kYellow};
-    graphics::Presenter presenter;
-
-    explicit ElectronCloud(app::Context&amp;) {}
-    void frame(app::Context&amp;) { presenter.present(renderer); }
-};
-
-app::Application&lt;ElectronCloud&gt; app{{.title = "ElectronCloud"}, argc, argv};
+<pre><code>app::Application&lt;ElectronCloud&gt; app{
+    {.width = 1920, .height = 1080, .title = "ElectronCloud", .resizable = false}, argc, argv};
 app.run();</code></pre>
 <p>
-  The app is a State type: <code>app::Application&lt;S&gt;</code> builds it once the GPU is
-  up (its constructor is init), calls <code>frame()</code> every frame, and destroys it
-  before the GPU goes down (its destructor is cleanup).
+  The app is a State type (<code>ElectronCloud</code>, below): <code>app::Application&lt;S&gt;</code>
+  builds it once the GPU is up (its constructor is init), calls <code>frame()</code> every
+  frame, and destroys it before the GPU goes down (its destructor is cleanup).
 </p>
 
 <h2 id="layout">Layout</h2>
@@ -55,17 +48,45 @@ build.cpp             the build script
 external/devtools/    submodule, header-only C utilities (rlog.h, common.h, attr.h)
 external/GameEngine/  submodule, the engine, built from source into our binary
 src/                  ElectronCloud's own code
+src/renderer/         ElectronCloudRenderer + its CUDA kernels
 docs/                 these pages</code></pre>
 
 <h2 id="build">Building</h2>
 <pre><code>git submodule update --init --recursive
-./run           # bootstrap ./build if needed, build, launch
+./run           # bootstrap ./build if needed, build, launch (needs the CUDA toolkit)
 ./run clean     # wipe .build first</code></pre>
 <p>
   <code>build.cpp</code> compiles GameEngine&rsquo;s sources directly (it does not run the
   engine&rsquo;s own <code>build.cpp</code>), generates the engine&rsquo;s shader header
   with the engine&rsquo;s bundled <code>sokol-shdc</code>, and links everything into
   <code>.build/bin/electron_cloud</code>.
+</p>
+
+<h2 id="renderer">The renderer</h2>
+<p>
+  <code>renderer::ElectronCloudRenderer</code> lives in <code>src/renderer/</code>, not in
+  GameEngine: it is specific to this project. It satisfies GameEngine&rsquo;s
+  <code>graphics::Renderer</code> concept, so <code>graphics::Presenter</code> draws it like
+  any engine renderer:
+</p>
+<pre><code>struct ElectronCloud {
+    renderer::ElectronCloudRenderer renderer;
+    graphics::Presenter presenter;
+
+    explicit ElectronCloud(app::Context&amp;) {}
+    void frame(app::Context&amp;) { presenter.present(renderer); }
+};</code></pre>
+<p>
+  CUDA runs inside it, on the render thread. Its constructor creates a
+  <code>gpu::CudaInterop</code> (a CUDA context on the same GPU as sokol&rsquo;s Vulkan device)
+  and loads its kernels from <code>.build/cuda/electron_cloud_renderer.ptx</code>, which
+  <code>build.cpp</code> compiles from <code>electron_cloud_renderer.cu</code> with
+  <code>nvcc --ptx</code>. A smoke-test kernel runs once at startup and logs the result.
+</p>
+<p>
+  CUDA can only share <strong>buffers</strong> with Vulkan in this engine, not images, so
+  CUDA can&rsquo;t write the output texture directly. Until the pixel path is built,
+  <code>render()</code> clears to yellow.
 </p>
 
 <h2 id="engine">Working on GameEngine</h2>
