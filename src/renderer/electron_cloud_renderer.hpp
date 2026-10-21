@@ -21,19 +21,49 @@
 
 #include <cuda.h>
 
+#include <array>
 #include <optional>
 
 namespace renderer {
 
-// What a ray has to land inside to count as a hit (see checkRay in the .cu file).
-struct Sphere {
-        Eigen::Vector3f center = Eigen::Vector3f::Zero();
-        f32 radius = 1.0f;
+// The C++-side description of what to draw and how. Each mirrors a plain-C struct in
+// raymarch_params.h (Ray*), which is what the kernel actually receives; see that file for
+// units.
+
+// One hydrogen-like eigenstate |n l m>, weighted by amplitude * e^(i * phase).
+struct QuantumState {
+        i32 n = 1; // principal, >= 1
+        i32 l = 0; // azimuthal, 0 .. n-1
+        i32 m = 0; // magnetic, -l .. l
+        f32 amplitude = 1.0f;
+        f32 phase = 0.0f; // radians, at time 0
 };
 
+// A nucleus and the electron's state around it -- everything the cloud's density depends
+// on. A transition between energy levels is a superposition of its start and end states
+// (state_count = 2) whose amplitudes the app moves over time.
+struct Atom {
+        Eigen::Vector3f nucleus = Eigen::Vector3f::Zero(); // world space
+        f32 nuclear_charge = 1.0f;                          // Z: 1 = hydrogen
+        f32 bohr_radius = 0.1f;                             // world units per Bohr radius
+        f32 bounds_radius = 1.5f;                           // world units; density is 0 outside
+        std::array<QuantumState, 2> states{};
+        u32 state_count = 1; // 1 or 2
+};
+
+// How rays are marched: quality against speed.
 struct RaymarchSettings {
-        f32 step = 0.1f;         // delta t: distance advanced per march step
-        f32 max_distance = 5.0f; // a ray gives up this far from the camera
+        f32 step_size = 0.1f;       // distance advanced per sample
+        f32 max_distance = 5.0f;    // a ray gives up this far from the camera
+        f32 min_density = 0.001f;   // samples at or below this are empty space
+        f32 opacity_cutoff = 0.95f; // a ray stops once this opaque
+};
+
+// Purely cosmetic: how density turns into colour.
+struct Appearance {
+        Eigen::Vector3f cloud_color{0.3f, 0.6f, 1.0f};        // colour of density 1, scaled by density
+        Eigen::Vector3f background_color{0.02f, 0.02f, 0.03f}; // shows through where the cloud isn't opaque
+        f32 absorption = 10.0f;                                // Beer-Lambert strength
 };
 
 // ElectronCloud's own implementation of GameEngine's graphics::Renderer concept. Lives here,
@@ -52,17 +82,22 @@ struct RaymarchSettings {
 // sokol_gfx is single-threaded: construct, call and destroy on the Application's thread.
 class ElectronCloudRenderer {
     public:
-        explicit ElectronCloudRenderer(RaymarchSettings settings = {});
+        explicit ElectronCloudRenderer(RaymarchSettings settings = {}, Appearance appearance = {});
         ~ElectronCloudRenderer();
 
         ElectronCloudRenderer(const ElectronCloudRenderer&) = delete;
         ElectronCloudRenderer& operator=(const ElectronCloudRenderer&) = delete;
 
-        // Where the rays start and which way they point. Call once per frame, before render().
-        void beginFrame(const graphics::primitives::scene::Camera& camera);
+        void setSettings(const RaymarchSettings& settings);
+        void setAppearance(const Appearance& appearance);
 
-        // The frame's scene: the sphere the rays test against.
-        void submit(const Sphere& sphere);
+        // Where the rays start and which way they point, and the simulation time (atomic units
+        // of time, hbar / E_h ~= 2.419e-17 s) the cloud is drawn at. Call once per frame,
+        // before render().
+        void beginFrame(const graphics::primitives::scene::Camera& camera, f64 time);
+
+        // The frame's scene: the atom whose electron cloud the rays march through.
+        void submit(const Atom& atom);
 
         // Marches the rays at width x height pixels and returns a view of the image. Does not
         // call sg_commit(); the view stays valid until the next render().
@@ -75,8 +110,7 @@ class ElectronCloudRenderer {
         // Blocks until neither CUDA nor the graphics queue is using the pixel buffer.
         void waitIdle();
 
-        RaymarchSettings m_settings;
-        RaymarchParams m_params{};
+        RaymarchParams m_params{}; // everything the kernel gets, kept current by the setters above
 
         // Released explicitly in the destructor, before the Vulkan buffer and semaphores it
         // imported are destroyed.

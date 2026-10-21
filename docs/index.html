@@ -30,7 +30,8 @@
 <p>
   <code>src/main.cpp</code> opens a fixed 1920&times;1080 window and draws ElectronCloud&rsquo;s
   own <a href="#renderer">renderer</a> through GameEngine&rsquo;s <code>graphics::Presenter</code>.
-  The renderer is a CUDA ray marcher; today it draws a single sphere.
+  The renderer is a CUDA ray marcher through an electron cloud. Its inputs describe a whole
+  atom, but the wave function isn&rsquo;t in yet, so it still draws a test sphere.
 </p>
 <pre><code>app::Application&lt;ElectronCloud&gt; app{
     {.width = 1920, .height = 1080, .title = "ElectronCloud", .resizable = false}, argc, argv};
@@ -77,36 +78,53 @@ docs/                 these pages</code></pre>
 };</code></pre>
 <p>
   It is a CUDA ray marcher. The State owns a fly <code>Camera</code> (WASD, Space/Ctrl,
-  ESC toggles mouse-look), a <code>renderer::Sphere</code> and the march settings:
+  ESC toggles mouse-look), the <code>renderer::Atom</code> whose cloud is drawn, and a
+  simulation clock in atomic units of time:
 </p>
-<pre><code>renderer::Sphere sphere{.center = Eigen::Vector3f::Zero(), .radius = 1.0f};
-renderer::ElectronCloudRenderer renderer{renderer::RaymarchSettings{.step = 0.1f, .max_distance = 5.0f}};
+<pre><code>renderer::Atom atom{
+    .nucleus = Eigen::Vector3f::Zero(),
+    .nuclear_charge = 1.0f,     // Z
+    .bohr_radius = 0.1f,        // world units per Bohr radius
+    .bounds_radius = 1.5f,      // density is 0 outside; rays are only marched inside
+    .states = {renderer::QuantumState{.n = 1, .l = 0, .m = 0, .amplitude = 1.0f, .phase = 0.0f}},
+    .state_count = 1,           // 2 = a superposition, for transitions between levels
+};
 
 void frame(app::Context&amp; context) {
     ...
-    renderer.beginFrame(camera);
-    renderer.submit(sphere);
-    presenter.present(renderer);
+    simulation_time += dt * kAtomicTimePerSecond;   // atomic units (hbar / E_h) per real second
+    renderer.beginFrame(camera, simulation_time);
+    renderer.submit(atom);
+    presenter.present(renderer, overlay);
 }</code></pre>
+<p>
+  The renderer also takes <code>RaymarchSettings</code> (<code>step_size</code>,
+  <code>max_distance</code>, <code>min_density</code>, <code>opacity_cutoff</code>) and a purely
+  cosmetic <code>Appearance</code> (cloud colour, background colour, absorption). Each C++
+  type is mirrored by a plain-C <code>Ray*</code> struct in <code>raymarch_params.h</code>,
+  which is what the kernel receives.
+</p>
 <p>
   Every frame the <code>raymarch</code> kernel (<code>electron_cloud_renderer.cu</code>)
-  marches one ray per pixel from the camera, <code>step</code> at a time, out to
-  <code>max_distance</code> &mdash; 50 steps at 0.1 and 5. At every step
-  <code>checkRay()</code> returns the cloud&rsquo;s density; for now that is the test sphere,
-  1 at the centre falling linearly to 0 at the surface:
+  marches one ray per pixel through the part of the atom&rsquo;s bounds the ray crosses,
+  <code>step_size</code> at a time. At every sample <code>checkRay()</code> returns the
+  cloud&rsquo;s density. That is where |&psi;(r, t)|&sup2; will go; for now it is a hard-coded
+  test sphere, 1 at the centre falling linearly to 0 at radius 1:
 </p>
-<pre><code>__device__ f32 checkRay(float3 position, const RaySphere&amp; sphere) {
-    const float3 offset = position - load3(sphere.center);
-    const f32 distance = sqrtf(dot(offset, offset));
-    return fmaxf(0.0f, 1.0f - distance / sphere.radius);
+<pre><code>__device__ f32 checkRay(float3 position, const RayAtom&amp; atom, f64 time) {
+    (void)atom;
+    (void)time;
+    constexpr f32 kTestRadius = 1.0f;
+    const f32 distance = sqrtf(dot(position, position));
+    return fmaxf(0.0f, 1.0f - distance / kTestRadius);
 }</code></pre>
 <p>
-  Each sample absorbs light (Beer-Lambert) and is blended front to back, so the sphere reads
-  as a cloud: denser parts are brighter and more opaque, and the ray stops once it is 95%
-  opaque.
+  Each sample absorbs light (Beer-Lambert) and is blended front to back, so the cloud
+  reads as a cloud: denser parts are brighter and more opaque, and the ray stops once it
+  reaches <code>opacity_cutoff</code>.
 </p>
-<pre><code>const f32 alpha = 1.0f - expf(-density * params.step * kAbsorption);   // kAbsorption = 10
-const float3 sample_color = cloud_color * density;                    // (0.3, 0.6, 1.0)
+<pre><code>const f32 alpha = 1.0f - expf(-density * march.step_size * appearance.absorption);
+const float3 sample_color = cloud_color * density;
 
 const f32 transmittance = 1.0f - accumulated_opacity;
 accumulated_color = accumulated_color + sample_color * (transmittance * alpha);

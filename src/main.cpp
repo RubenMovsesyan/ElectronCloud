@@ -32,6 +32,11 @@ constexpr f32 kLookSensitivity = 0.15f; // radians per pixel of mouse delta, per
 constexpr f32 kPitchLimit = 1.5533f;    // ~89 degrees
 constexpr f32 kFovY = 1.0472f;          // 60 degrees
 
+// Atomic units of time (hbar / E_h ~= 2.419e-17 s) that pass per real second. Real time would
+// be ~4.1e16; this slows the electron down enough to watch. As a feel for it: a 1s <-> 2p
+// superposition in hydrogen oscillates with a period of ~16.8 atomic units.
+constexpr f64 kAtomicTimePerSecond = 10.0;
+
 const Eigen::Vector3f kWorldUp{0.0f, 1.0f, 0.0f};
 
 f32 aspectOf(const app::Context& context) {
@@ -63,10 +68,27 @@ struct ElectronCloud {
         f32 yaw = 0.0f; // 0, 0 matches the starting direction (0, 0, -1)
         f32 pitch = 0.0f;
 
-        // What the rays test against: inside this sphere is a hit.
-        renderer::Sphere sphere{.center = Eigen::Vector3f::Zero(), .radius = 1.0f};
+        // The atom whose electron cloud is drawn: hydrogen in its ground state, |1 0 0>, at the
+        // origin. (The renderer still draws a test sphere; the wave function isn't in yet.)
+        renderer::Atom atom{
+            .nucleus = Eigen::Vector3f::Zero(),
+            .nuclear_charge = 1.0f,
+            .bohr_radius = 0.1f,
+            .bounds_radius = 1.5f,
+            .states = {renderer::QuantumState{.n = 1, .l = 0, .m = 0, .amplitude = 1.0f, .phase = 0.0f}},
+            .state_count = 1,
+        };
+        // Simulation time in atomic units, advanced by kAtomicTimePerSecond per real second.
+        f64 simulation_time = 0.0;
 
-        renderer::ElectronCloudRenderer renderer{renderer::RaymarchSettings{.step = 0.1f, .max_distance = 5.0f}};
+        renderer::ElectronCloudRenderer renderer{
+            renderer::RaymarchSettings{.step_size = 0.02f, .max_distance = 5.0f, .min_density = 0.001f, .opacity_cutoff = 0.95f},
+            renderer::Appearance{
+                .cloud_color = {0.3f, 0.6f, 1.0f},
+                .background_color = {0.02f, 0.02f, 0.03f},
+                .absorption = 10.0f,
+            },
+        };
         graphics::Presenter presenter;
 
         std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
@@ -87,9 +109,10 @@ struct ElectronCloud {
             }
             camera.setAspectRatio(aspectOf(context));
             flyCamera(context, dt);
+            simulation_time += static_cast<f64>(dt) * kAtomicTimePerSecond;
 
-            renderer.beginFrame(camera);
-            renderer.submit(sphere);
+            renderer.beginFrame(camera, simulation_time);
+            renderer.submit(atom);
             presenter.present(renderer, [&]() {
                 context.debugUI().draw(context.width(), context.height(), dt, sapp_dpi_scale(), drawFpsCounter);
             });

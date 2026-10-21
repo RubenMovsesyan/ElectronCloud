@@ -57,10 +57,31 @@ it is specific to this project. It plugs into the engine through the `graphics::
 concept (`sg_view render(int width, int height)`) and is drawn by `graphics::Presenter`
 like any engine renderer.
 
-It is a CUDA ray marcher. The State (`ElectronCloud` in `src/main.cpp`) owns the
-`Camera` (fly controls, same as the engine sandboxes), a `renderer::Sphere`, and the
-`RaymarchSettings` (`step` = delta t, `max_distance`); each frame it calls
-`renderer.beginFrame(camera)`, `renderer.submit(sphere)`, then `presenter.present(renderer)`.
+It is a CUDA ray marcher through an electron cloud. The State (`ElectronCloud` in
+`src/main.cpp`) owns the `Camera` (fly controls, same as the engine sandboxes), the
+`renderer::Atom`, and a simulation clock; each frame it calls
+`renderer.beginFrame(camera, simulation_time)`, `renderer.submit(atom)`, then
+`presenter.present(renderer, overlay)`.
+
+What the renderer is given (C++ types in `electron_cloud_renderer.hpp`, each mirrored by a
+plain-C `Ray*` struct in `raymarch_params.h` that the kernel receives):
+
+- `Atom` / `RayAtom`: everything the density depends on. Nucleus position, nuclear charge
+  `Z`, `bohr_radius` (world units per Bohr radius -- the cloud's size on screen),
+  `bounds_radius` (density is 0 outside; rays are only marched inside it), and up to two
+  `QuantumState`s `|n l m>` with a complex weight `amplitude * e^(i * phase)`. Two states
+  model a transition between energy levels as a superposition whose amplitudes the app
+  moves over time.
+- Simulation time: `f64`, in atomic units of time (hbar / E_h ~= 2.419e-17 s), advanced
+  by the State at `kAtomicTimePerSecond` per real second (10 today; real time would be
+  ~4.1e16). `f64` so the phases stay exact as it grows.
+- `RaymarchSettings` / `RayMarch`: `step_size`, `max_distance`, `min_density`,
+  `opacity_cutoff` -- quality against speed.
+- `Appearance` / `RayAppearance`: cloud colour, background colour, absorption -- purely
+  cosmetic.
+
+The wave function is not in yet: `checkRay()` takes the atom and the time but still returns
+a hard-coded test sphere (centre 0, radius 1, density 1 at the centre falling linearly to 0).
 
 - CUDA runs **inside the renderer, on the render thread** -- no worker. The constructor
   makes a `gpu::CudaInterop` (a CUDA context on the GPU sokol's Vulkan device uses) and
@@ -74,19 +95,22 @@ It is a CUDA ray marcher. The State (`ElectronCloud` in `src/main.cpp`) owns the
   signalled at the start of frame N for frame N-1 (sokol's `sg_commit` submitted that
   frame's copy after the last `render()` returned); CUDA waits on it, marches, signals
   `cuda_done` = N; the graphics queue waits on `cuda_done` before the copy pass.
-- The kernel: one thread per pixel; a ray from the camera advances `step` at a time out to
-  `max_distance`. At each step `checkRay()` returns the cloud's density there (an `f32`;
-  currently the test sphere: 1 at the centre, linear to 0 at the surface). Each sample is
-  turned into an opacity with Beer-Lambert (`alpha = 1 - exp(-density * step *
-  kAbsorption)`, `kAbsorption = 10`) and blended front to back with colour
-  `(0.3, 0.6, 1.0) * density`; the ray stops early at 95% opacity, and leftover light shows
-  the background. Samples at or below 0.001 density are skipped.
+- The kernel: one thread per pixel. The ray is marched only between where it enters and
+  leaves the atom's bounds sphere (and no further than `max_distance` from the camera),
+  `step_size` at a time; the loop variable is `distance` along the ray, not time. At each
+  sample `checkRay(position, atom, time)` returns the density (`f32`). Each sample becomes
+  an opacity with Beer-Lambert (`alpha = 1 - exp(-density * step_size * absorption)`) and
+  is blended front to back with `cloud_color * density`; the ray stops early at
+  `opacity_cutoff`, samples at or below `min_density` are skipped, and leftover light shows
+  `background_color`.
 - Kernel code uses `f32` from `common.h` (nvcc gets `-Iexternal/devtools`), not `float`;
   CUDA's own vector types (`float3`) stay as they are.
 - `raymarch_params.h` is plain C data (`f32`s, unsigneds) passed by value to
   `cuLaunchKernel`; keep it free of Eigen and CUDA vector types so both compilers agree on
-  its layout. Headers the kernels include are listed in `cuda_headers` in `build.cpp` so a
-  change to them rebuilds the PTX.
+  its layout. `static_assert`s at the end of the header pin every struct's size (and the
+  `f64 time` offset); both compilers check them, so a layout disagreement fails the build.
+  Update them when a field changes. Headers the kernels include are listed in
+  `cuda_headers` in `build.cpp` so a change to them rebuilds the PTX.
 - `CudaInterop` has no unmap: a resize leaks the old pixel buffer's CUDA import until the
   renderer is destroyed. The window is a fixed size, so this does not happen today.
 - The destructor drains CUDA and the graphics queue, then releases CUDA *before* the

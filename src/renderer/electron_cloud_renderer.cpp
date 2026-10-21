@@ -6,6 +6,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -31,9 +32,11 @@ void store3(f32 out[3], const Eigen::Vector3f& v) {
 
 } // namespace
 
-ElectronCloudRenderer::ElectronCloudRenderer(RaymarchSettings settings)
-    : m_settings(settings),
-      m_copy(graphics::primitives::pass::FullscreenPass::create(ec_pixels_shader_desc(sg_query_backend()), kOutputFormat, "electron cloud copy")) {
+ElectronCloudRenderer::ElectronCloudRenderer(RaymarchSettings settings, Appearance appearance)
+    : m_copy(graphics::primitives::pass::FullscreenPass::create(ec_pixels_shader_desc(sg_query_backend()), kOutputFormat, "electron cloud copy")) {
+    setSettings(settings);
+    setAppearance(appearance);
+
     // Makes a context current on this (the render) thread, on sokol's GPU.
     m_cuda = gpu::CudaInterop::create();
     if (!m_cuda) {
@@ -91,7 +94,24 @@ void ElectronCloudRenderer::waitIdle() {
     }
 }
 
-void ElectronCloudRenderer::beginFrame(const graphics::primitives::scene::Camera& camera) {
+void ElectronCloudRenderer::setSettings(const RaymarchSettings& settings) {
+    RayMarch& out = m_params.march;
+    out.step_size = settings.step_size;
+    out.max_distance = settings.max_distance;
+    out.min_density = settings.min_density;
+    out.opacity_cutoff = settings.opacity_cutoff;
+}
+
+void ElectronCloudRenderer::setAppearance(const Appearance& appearance) {
+    RayAppearance& out = m_params.appearance;
+    store3(out.cloud_color, appearance.cloud_color);
+    store3(out.background_color, appearance.background_color);
+    out.absorption = appearance.absorption;
+}
+
+void ElectronCloudRenderer::beginFrame(const graphics::primitives::scene::Camera& camera, f64 time) {
+    m_params.time = time;
+
     const Eigen::Vector3f world_up{0.0f, 1.0f, 0.0f};
     const Eigen::Vector3f forward = camera.direction().normalized();
     const Eigen::Vector3f right = forward.cross(world_up).normalized();
@@ -107,9 +127,23 @@ void ElectronCloudRenderer::beginFrame(const graphics::primitives::scene::Camera
     out.aspect = camera.aspectRatio();
 }
 
-void ElectronCloudRenderer::submit(const Sphere& sphere) {
-    store3(m_params.sphere.center, sphere.center);
-    m_params.sphere.radius = sphere.radius;
+void ElectronCloudRenderer::submit(const Atom& atom) {
+    RayAtom& out = m_params.atom;
+    store3(out.nucleus, atom.nucleus);
+    out.nuclear_charge = atom.nuclear_charge;
+    out.bohr_radius = atom.bohr_radius;
+    out.bounds_radius = atom.bounds_radius;
+    out.state_count = std::clamp<u32>(atom.state_count, 1, static_cast<u32>(atom.states.size()));
+    for (usize i = 0; i < atom.states.size(); i++) {
+        const QuantumState& state = atom.states[i];
+        out.states[i] = RayQuantumState{
+            .n = state.n,
+            .l = state.l,
+            .m = state.m,
+            .amplitude = state.amplitude,
+            .phase = state.phase,
+        };
+    }
 }
 
 bool ElectronCloudRenderer::rebuildTargets(int width, int height) {
@@ -162,10 +196,8 @@ sg_view ElectronCloudRenderer::render(int width, int height) {
     m_frame++;
 
     // CUDA: wait until the previous frame has finished reading the pixels, march, signal.
-    m_params.step = m_settings.step;
-    m_params.max_distance = m_settings.max_distance;
-    m_params.width = static_cast<unsigned>(width);
-    m_params.height = static_cast<unsigned>(height);
+    m_params.width = static_cast<u32>(width);
+    m_params.height = static_cast<u32>(height);
 
     CUstream stream = m_cuda->stream();
     m_cuda->waitAsync(m_render_done_sem, m_frame - 1, stream);
