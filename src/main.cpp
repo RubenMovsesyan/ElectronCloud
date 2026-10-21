@@ -3,21 +3,98 @@
 
 #include <app/application.hpp>
 #include <graphics/presenter.hpp>
+#include <graphics/primitives/scene/camera.hpp>
 #include <renderer/electron_cloud_renderer.hpp>
 
-// ElectronCloud: our own renderer (src/renderer/) plugged into GameEngine's Presenter.
+#include <common.h>
+
+#include <Eigen/Dense>
+
+#include <sokol_app.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+
+// ElectronCloud: our own CUDA ray marcher (src/renderer/) plugged into GameEngine's Presenter,
+// with a fly camera marking where the rays start.
+//
+//   WASD move, Space / Left Ctrl up / down, ESC toggles mouse-look.
 
 namespace {
+
+using graphics::primitives::scene::Camera;
+
+constexpr f32 kMoveSpeed = 2.0f;        // units/sec -- the scene is a few units across
+constexpr f32 kLookSensitivity = 0.15f; // radians per pixel of mouse delta, per second
+constexpr f32 kPitchLimit = 1.5533f;    // ~89 degrees
+constexpr f32 kFovY = 1.0472f;          // 60 degrees
+
+const Eigen::Vector3f kWorldUp{0.0f, 1.0f, 0.0f};
+
+f32 aspectOf(const app::Context& context) {
+    return context.height() > 0 ? static_cast<f32>(context.width()) / static_cast<f32>(context.height()) : 1.0f;
+}
 
 // The app's State. app::Application builds it once the GPU is up and destroys it before the
 // GPU goes down, so members holding GPU handles are plain members.
 struct ElectronCloud {
-        renderer::ElectronCloudRenderer renderer;
+        // Where the rays start. Starts 3 units back on +Z, looking at the origin.
+        Camera camera;
+        f32 yaw = 0.0f; // 0, 0 matches the starting direction (0, 0, -1)
+        f32 pitch = 0.0f;
+
+        // What the rays test against: inside this sphere is a hit.
+        renderer::Sphere sphere{.center = Eigen::Vector3f::Zero(), .radius = 1.0f};
+
+        renderer::ElectronCloudRenderer renderer{renderer::RaymarchSettings{.step = 0.1f, .max_distance = 5.0f}};
         graphics::Presenter presenter;
 
-        explicit ElectronCloud(app::Context&) {}
+        std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
 
-        void frame(app::Context&) { presenter.present(renderer); }
+        explicit ElectronCloud(app::Context& context)
+            : camera(kFovY, aspectOf(context), 0.1f, 100.0f, Eigen::Vector3f{0.0f, 0.0f, 3.0f}, Eigen::Vector3f{0.0f, 0.0f, -1.0f}, kWorldUp) {}
+
+        void frame(app::Context& context) {
+            const auto now = std::chrono::steady_clock::now();
+            const f32 dt = std::chrono::duration<f32>(now - last_time).count();
+            last_time = now;
+
+            if (context.input().isKeyPressed(SAPP_KEYCODE_ESCAPE)) {
+                context.toggleCursorCapture();
+            }
+            camera.setAspectRatio(aspectOf(context));
+            flyCamera(context, dt);
+
+            renderer.beginFrame(camera);
+            renderer.submit(sphere);
+            presenter.present(renderer);
+        }
+
+        // Same controls as GameEngine's sandboxes.
+        void flyCamera(app::Context& context, f32 dt) {
+            const Eigen::Vector3f forward = camera.direction().normalized();
+            const Eigen::Vector3f right = forward.cross(kWorldUp).normalized();
+            const app::InputState& input = context.input();
+
+            if (input.isKeyDown(SAPP_KEYCODE_W)) *camera.mutablePosition() += forward * kMoveSpeed * dt;
+            if (input.isKeyDown(SAPP_KEYCODE_S)) *camera.mutablePosition() -= forward * kMoveSpeed * dt;
+            if (input.isKeyDown(SAPP_KEYCODE_D)) *camera.mutablePosition() += right * kMoveSpeed * dt;
+            if (input.isKeyDown(SAPP_KEYCODE_A)) *camera.mutablePosition() -= right * kMoveSpeed * dt;
+            if (input.isKeyDown(SAPP_KEYCODE_SPACE)) *camera.mutablePosition() += kWorldUp * kMoveSpeed * dt;
+            if (input.isKeyDown(SAPP_KEYCODE_LEFT_CONTROL)) *camera.mutablePosition() -= kWorldUp * kMoveSpeed * dt;
+
+            const Eigen::Vector2f mouse_delta = input.mouseDelta();
+            if (context.isCursorCaptured() && (mouse_delta.x() != 0.0f || mouse_delta.y() != 0.0f)) {
+                yaw += mouse_delta.x() * kLookSensitivity * dt;
+                pitch = std::clamp(pitch - mouse_delta.y() * kLookSensitivity * dt, -kPitchLimit, kPitchLimit);
+            }
+            *camera.mutableDirection() = Eigen::Vector3f{
+                std::cos(pitch) * std::sin(yaw),
+                std::sin(pitch),
+                -std::cos(pitch) * std::cos(yaw),
+            };
+        }
 };
 
 } // namespace

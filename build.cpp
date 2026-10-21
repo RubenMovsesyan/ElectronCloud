@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
         const bool stale = !std::filesystem::exists(ptx) ||
                            std::filesystem::last_write_time(cuda_source) > std::filesystem::last_write_time(ptx);
         if (stale) {
-            app.addTask(Output(Command({cuda_dir + "/bin/nvcc", "--ptx", "-arch=sm_89", "-O3", cuda_source, "-o", ptx})));
+            app.addTask(Output(Command({cuda_dir + "/bin/nvcc", "--ptx", "-arch=sm_89", "-O3", "-Isrc", cuda_source, "-o", ptx})));
         }
     }
 
@@ -98,6 +98,17 @@ int main(int argc, char** argv) {
     if (shader_stale) {
         shader_task = &app.addTask(Output(Command({ENGINE + "/external/sokol-tools-bin/bin/linux/sokol-shdc", "-i", shader_source,
                                                    "-o", shader_header, "-l", "spirv_vk", "-f", "sokol"})));
+    }
+
+    // Our shaders -> .build/shaders/electron_cloud.glsl.h, same staleness guard as the engine's.
+    const std::string ec_shader_source = "src/renderer/shaders/electron_cloud.glsl";
+    const std::string ec_shader_header = BUILD_DIR + "/shaders/electron_cloud.glsl.h";
+    const bool ec_shader_stale = !std::filesystem::exists(ec_shader_header) ||
+                                 std::filesystem::last_write_time(ec_shader_source) > std::filesystem::last_write_time(ec_shader_header);
+    Task* ec_shader_task = nullptr;
+    if (ec_shader_stale) {
+        ec_shader_task = &app.addTask(Output(Command({ENGINE + "/external/sokol-tools-bin/bin/linux/sokol-shdc", "-i", ec_shader_source,
+                                                      "-o", ec_shader_header, "-l", "spirv_vk", "-f", "sokol"})));
     }
 
     // Mirror of engine_sources in external/GameEngine/build.cpp.
@@ -164,7 +175,13 @@ int main(int argc, char** argv) {
         objects.push_back(task);
     }
     for (const auto& source : sources) {
-        objects.push_back(app.addTask(Output(Object(source))));
+        Task& task = app.addTask(Output(Object(source)));
+        // Orders the compile after sokol-shdc; only the renderer includes the header, but
+        // ordering the rest too costs nothing.
+        if (ec_shader_task != nullptr) {
+            task.depends_on(*ec_shader_task);
+        }
+        objects.push_back(task);
     }
 
     Task& exe = app.addTask(Output(Binary("electron_cloud")));

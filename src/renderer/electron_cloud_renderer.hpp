@@ -4,9 +4,20 @@
 #error "ElectronCloudRenderer needs CUDA: build.cpp defines GAMEENGINE_CUDA when it finds the toolkit"
 #endif
 
+#include <renderer/raymarch_params.h>
+
+#include <gpu/cross_semaphore.hpp>
 #include <gpu/cuda_interop.hpp>
+#include <gpu/external_buffer.hpp>
+#include <gpu/handle.hpp>
+#include <graphics/primitives/pass/fullscreen_pass.hpp>
+#include <graphics/primitives/pass/render_target.hpp>
+#include <graphics/primitives/scene/camera.hpp>
 #include <graphics/renderer.hpp>
-#include <graphics/renderers/clear_renderer.hpp>
+
+#include <common.h>
+
+#include <Eigen/Dense>
 
 #include <cuda.h>
 
@@ -14,40 +25,80 @@
 
 namespace renderer {
 
+// What a ray has to land inside to count as a hit (see checkRay in the .cu file).
+struct Sphere {
+        Eigen::Vector3f center = Eigen::Vector3f::Zero();
+        f32 radius = 1.0f;
+};
+
+struct RaymarchSettings {
+        f32 step = 0.1f;         // delta t: distance advanced per march step
+        f32 max_distance = 5.0f; // a ray gives up this far from the camera
+};
+
 // ElectronCloud's own implementation of GameEngine's graphics::Renderer concept. Lives here,
 // not in the engine: it plugs into graphics::Presenter like any engine renderer, but it is
 // specific to this project.
 //
-// CUDA runs inside the renderer, on the render thread: the constructor brings up a CUDA
-// context on the same GPU sokol's Vulkan device uses and loads this renderer's kernels
-// (electron_cloud_renderer.cu, compiled to PTX by build.cpp). The pixel path -- CUDA
-// computing the image render() returns -- is not wired yet; render() clears to a solid
-// colour until it is.
+// A CUDA ray marcher. Every frame a CUDA kernel marches one ray per pixel from the camera and
+// writes RGBA8 pixels into a buffer shared with Vulkan (CUDA can't write a Vulkan image in
+// this engine, only a buffer); a fullscreen pass then copies the buffer into the output image.
+// CUDA runs here, on the render thread -- no worker.
 //
-// sokol_gfx is single-threaded: construct, render and destroy on the Application's thread.
+// Per frame, two timeline semaphores keep CUDA and Vulkan off the pixel buffer at the same
+// time: CUDA waits for `render_done` (the previous frame's copy has finished reading), writes,
+// and signals `cuda_done`; the graphics queue waits for `cuda_done` before the copy.
+//
+// sokol_gfx is single-threaded: construct, call and destroy on the Application's thread.
 class ElectronCloudRenderer {
     public:
-        ElectronCloudRenderer();
+        explicit ElectronCloudRenderer(RaymarchSettings settings = {});
         ~ElectronCloudRenderer();
 
         ElectronCloudRenderer(const ElectronCloudRenderer&) = delete;
         ElectronCloudRenderer& operator=(const ElectronCloudRenderer&) = delete;
 
-        // Records this frame's passes at width x height pixels and returns a view of the
-        // result. Does not call sg_commit(); the view stays valid until the next render().
+        // Where the rays start and which way they point. Call once per frame, before render().
+        void beginFrame(const graphics::primitives::scene::Camera& camera);
+
+        // The frame's scene: the sphere the rays test against.
+        void submit(const Sphere& sphere);
+
+        // Marches the rays at width x height pixels and returns a view of the image. Does not
+        // call sg_commit(); the view stays valid until the next render().
         sg_view render(int width, int height);
 
     private:
-        // Runs a tiny kernel and checks the result on the CPU: proves nvcc, the PTX load and
-        // a launch all work. Logs and returns false on any failure.
-        bool smokeTest();
+        // (Re)creates the pixel buffer and output target for a new size and maps the buffer
+        // into CUDA. False on failure (logged); the renderer then returns an empty view.
+        bool rebuildTargets(int width, int height);
+        // Blocks until neither CUDA nor the graphics queue is using the pixel buffer.
+        void waitIdle();
 
-        // Declared first so it is destroyed last: the module belongs to its context.
+        RaymarchSettings m_settings;
+        RaymarchParams m_params{};
+
+        // Released explicitly in the destructor, before the Vulkan buffer and semaphores it
+        // imported are destroyed.
         std::optional<gpu::CudaInterop> m_cuda;
         CUmodule m_module = nullptr;
-        CUfunction m_fill = nullptr;
+        CUfunction m_raymarch = nullptr;
 
-        graphics::renderers::ClearRenderer m_placeholder;
+        std::optional<gpu::CrossSemaphore> m_cuda_done;   // CUDA -> graphics queue: pixels written
+        std::optional<gpu::CrossSemaphore> m_render_done; // graphics queue -> CUDA: pixels read
+        int m_cuda_done_sem = -1;
+        int m_render_done_sem = -1;
+        u64 m_frame = 0; // frames rendered; the semaphore value for this frame
+
+        int m_width = 0;
+        int m_height = 0;
+        std::optional<gpu::ExternalBuffer> m_pixels; // width * height RGBA8, written by CUDA
+        CUdeviceptr m_pixels_cuda = 0;
+        gpu::ViewHandle m_pixels_view;               // storage-buffer view for the copy pass
+        graphics::primitives::pass::RenderTarget m_target;
+
+        graphics::primitives::pass::FullscreenPass m_copy;
+        bool m_ready = false; // CUDA, the kernel and the semaphores all came up
 };
 
 static_assert(graphics::Renderer<ElectronCloudRenderer>);

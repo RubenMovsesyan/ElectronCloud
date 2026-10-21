@@ -12,7 +12,8 @@ external/             one dependency per directory, each a git submodule
   devtools/           header-only C utilities: rlog.h, common.h (u32, f32, ...), attr.h
   GameEngine/         the engine, cloned from its remote, with its own submodules (--recursive)
 src/                  ElectronCloud's own code; src/main.cpp is the entry point
-  renderer/           ElectronCloudRenderer (C++ + its CUDA kernels in .cu files)
+  renderer/           ElectronCloudRenderer: C++, its CUDA kernels (.cu), the params struct
+                      both share (raymarch_params.h), and shaders/ (sokol-shdc GLSL)
 docs/                 HTML docs (dark mode), docs/index.html is the overview
 ```
 
@@ -31,6 +32,11 @@ git submodule update --init --recursive   # after cloning
 
 `./build` rebuilds itself when `build.cpp` or `buildcpp/build.hpp` changes and writes
 `compile_commands.json`. The binary is `.build/bin/electron_cloud`.
+
+Shaders: `build.cpp` runs the engine's bundled `sokol-shdc` over the engine's
+`engine.glsl` and over our `src/renderer/shaders/electron_cloud.glsl`, generating
+`.build/shaders/<name>.glsl.h`. A storage buffer in sokol-shdc GLSL must be an array of a
+struct (`ec_pixel pixels[]`, not `uint pixels[]`).
 
 `build.cpp` compiles GameEngine **from source** straight into our binary -- the engine's
 own `build.cpp` is never run. Its `engine_sources` list mirrors the one in
@@ -51,14 +57,34 @@ it is specific to this project. It plugs into the engine through the `graphics::
 concept (`sg_view render(int width, int height)`) and is drawn by `graphics::Presenter`
 like any engine renderer.
 
-- CUDA runs **inside the renderer, on the render thread**. The constructor makes a
-  `gpu::CudaInterop` (a CUDA context on the GPU sokol's Vulkan device uses, current on the
-  calling thread) and loads `electron_cloud_renderer.ptx`. No worker thread.
-- CUDA can only share **buffers** with sokol/Vulkan, not images: the engine's sokol fork
-  exports buffer memory (`gpu::ExternalBuffer`, vertex + storage usage) and nothing else.
-  So CUDA cannot write a texture directly; pixels have to go through a buffer.
-- The pixel path is not built yet: `render()` clears to yellow (an internal
-  `ClearRenderer`), and the constructor runs a smoke-test kernel and logs the result.
+It is a CUDA ray marcher. The State (`ElectronCloud` in `src/main.cpp`) owns the
+`Camera` (fly controls, same as the engine sandboxes), a `renderer::Sphere`, and the
+`RaymarchSettings` (`step` = delta t, `max_distance`); each frame it calls
+`renderer.beginFrame(camera)`, `renderer.submit(sphere)`, then `presenter.present(renderer)`.
+
+- CUDA runs **inside the renderer, on the render thread** -- no worker. The constructor
+  makes a `gpu::CudaInterop` (a CUDA context on the GPU sokol's Vulkan device uses) and
+  loads `electron_cloud_renderer.ptx`.
+- CUDA can only share **buffers** with Vulkan in this engine, not images (the sokol fork
+  exports buffer memory only). So the `raymarch` kernel writes RGBA8 pixels into a
+  `gpu::ExternalBuffer` (`pixels[y * width + x]`, y = 0 at the top, red in the low byte),
+  and a fullscreen pass (`shaders/electron_cloud.glsl`, `ec_pixels`) copies it into the
+  output `RenderTarget` that `render()` returns.
+- Sync, all inside `render()`: two `gpu::CrossSemaphore` timelines. `render_done` is
+  signalled at the start of frame N for frame N-1 (sokol's `sg_commit` submitted that
+  frame's copy after the last `render()` returned); CUDA waits on it, marches, signals
+  `cuda_done` = N; the graphics queue waits on `cuda_done` before the copy pass.
+- The kernel: one thread per pixel; a ray from the camera advances `step` at a time
+  until `checkRay()` says it hit or it is `max_distance` away. `checkRay()` is currently
+  "inside the sphere". Hits are shaded by distance travelled (nearer = brighter), which
+  shows the step size as rings.
+- `raymarch_params.h` is plain C data (floats, unsigneds) passed by value to
+  `cuLaunchKernel`; keep it free of Eigen and CUDA vector types so both compilers agree on
+  its layout.
+- `CudaInterop` has no unmap: a resize leaks the old pixel buffer's CUDA import until the
+  renderer is destroyed. The window is a fixed size, so this does not happen today.
+- The destructor drains CUDA and the graphics queue, then releases CUDA *before* the
+  Vulkan buffer and semaphores it imported.
 
 ## Working on GameEngine
 
@@ -73,9 +99,9 @@ GameEngine doesn't yet support everything ElectronCloud needs, so it is develope
 - Commit inside the submodule, push it to the engine's remote, then commit the moved
   submodule pointer here. A pointer to an unpushed engine commit breaks fresh clones.
 - The engine renders through the `graphics::Renderer` concept: a type with
-  `sg_view render(int width, int height)` handed to `graphics::Presenter`. The electron
-  renderer will be one such type; today `src/main.cpp` uses
-  `graphics::renderers::ClearRenderer` (a solid yellow window) as first light.
+  `sg_view render(int width, int height)` handed to `graphics::Presenter`.
+  `renderer::ElectronCloudRenderer` is one such type, kept outside the engine (see "The
+  renderer").
 
 ## Gotchas
 
