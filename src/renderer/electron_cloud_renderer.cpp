@@ -23,7 +23,7 @@ constexpr const char* kPtxPath = ".build/cuda/electron_cloud_renderer.ptx";
 constexpr sg_pixel_format kOutputFormat = SG_PIXELFORMAT_RGBA8;
 constexpr u32 kBlock = 16; // 16 x 16 threads per CUDA block
 
-void store3(float out[3], const Eigen::Vector3f& v) {
+void store3(f32 out[3], const Eigen::Vector3f& v) {
     out[0] = v.x();
     out[1] = v.y();
     out[2] = v.z();

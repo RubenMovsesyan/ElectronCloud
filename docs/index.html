@@ -90,15 +90,27 @@ void frame(app::Context&amp; context) {
 }</code></pre>
 <p>
   Every frame the <code>raymarch</code> kernel (<code>electron_cloud_renderer.cu</code>)
-  marches one ray per pixel from the camera, <code>step</code> at a time, until
-  <code>checkRay()</code> reports a hit (for now: the point is inside the sphere) or the ray
-  is <code>max_distance</code> away &mdash; 50 steps at 0.1 and 5. Hits are shaded by distance,
-  so the step size shows as rings.
+  marches one ray per pixel from the camera, <code>step</code> at a time, out to
+  <code>max_distance</code> &mdash; 50 steps at 0.1 and 5. At every step
+  <code>checkRay()</code> returns the cloud&rsquo;s density; for now that is the test sphere,
+  1 at the centre falling linearly to 0 at the surface:
 </p>
-<pre><code>__device__ bool checkRay(float3 position, const RaySphere&amp; sphere) {
+<pre><code>__device__ f32 checkRay(float3 position, const RaySphere&amp; sphere) {
     const float3 offset = position - load3(sphere.center);
-    return dot(offset, offset) &lt;= sphere.radius * sphere.radius;
+    const f32 distance = sqrtf(dot(offset, offset));
+    return fmaxf(0.0f, 1.0f - distance / sphere.radius);
 }</code></pre>
+<p>
+  Each sample absorbs light (Beer-Lambert) and is blended front to back, so the sphere reads
+  as a cloud: denser parts are brighter and more opaque, and the ray stops once it is 95%
+  opaque.
+</p>
+<pre><code>const f32 alpha = 1.0f - expf(-density * params.step * kAbsorption);   // kAbsorption = 10
+const float3 sample_color = cloud_color * density;                    // (0.3, 0.6, 1.0)
+
+const f32 transmittance = 1.0f - accumulated_opacity;
+accumulated_color = accumulated_color + sample_color * (transmittance * alpha);
+accumulated_opacity += transmittance * alpha;</code></pre>
 <p>
   CUDA can only share <strong>buffers</strong> with Vulkan in this engine, not images, so the
   kernel writes RGBA8 pixels into a shared buffer and a fullscreen pass

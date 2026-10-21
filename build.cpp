@@ -75,14 +75,23 @@ int main(int argc, char** argv) {
     const std::vector<std::string> cuda_kernels = {
         "src/renderer/electron_cloud_renderer.cu",
     };
+    // Headers the kernels include. The staleness check below can't scan .cu includes, so a
+    // change to one of these must rebuild every PTX (a struct shared with C++ that changes
+    // layout on one side only would be read as garbage).
+    const std::vector<std::string> cuda_headers = {
+        "src/renderer/raymarch_params.h",
+    };
     Command mkdir_cuda({"mkdir", "-p", BUILD_DIR + "/cuda"});
     mkdir_cuda.exec();
     for (const std::string& cuda_source : cuda_kernels) {
         const std::string ptx = BUILD_DIR + "/cuda/" + std::filesystem::path(cuda_source).stem().string() + ".ptx";
-        const bool stale = !std::filesystem::exists(ptx) ||
-                           std::filesystem::last_write_time(cuda_source) > std::filesystem::last_write_time(ptx);
+        bool stale = !std::filesystem::exists(ptx) ||
+                     std::filesystem::last_write_time(cuda_source) > std::filesystem::last_write_time(ptx);
+        for (const std::string& header : cuda_headers) {
+            stale = stale || std::filesystem::last_write_time(header) > std::filesystem::last_write_time(ptx);
+        }
         if (stale) {
-            app.addTask(Output(Command({cuda_dir + "/bin/nvcc", "--ptx", "-arch=sm_89", "-O3", "-Isrc", cuda_source, "-o", ptx})));
+            app.addTask(Output(Command({cuda_dir + "/bin/nvcc", "--ptx", "-arch=sm_89", "-O3", "-Isrc", "-Iexternal/devtools", cuda_source, "-o", ptx})));
         }
     }
 

@@ -74,13 +74,19 @@ It is a CUDA ray marcher. The State (`ElectronCloud` in `src/main.cpp`) owns the
   signalled at the start of frame N for frame N-1 (sokol's `sg_commit` submitted that
   frame's copy after the last `render()` returned); CUDA waits on it, marches, signals
   `cuda_done` = N; the graphics queue waits on `cuda_done` before the copy pass.
-- The kernel: one thread per pixel; a ray from the camera advances `step` at a time
-  until `checkRay()` says it hit or it is `max_distance` away. `checkRay()` is currently
-  "inside the sphere". Hits are shaded by distance travelled (nearer = brighter), which
-  shows the step size as rings.
-- `raymarch_params.h` is plain C data (floats, unsigneds) passed by value to
+- The kernel: one thread per pixel; a ray from the camera advances `step` at a time out to
+  `max_distance`. At each step `checkRay()` returns the cloud's density there (an `f32`;
+  currently the test sphere: 1 at the centre, linear to 0 at the surface). Each sample is
+  turned into an opacity with Beer-Lambert (`alpha = 1 - exp(-density * step *
+  kAbsorption)`, `kAbsorption = 10`) and blended front to back with colour
+  `(0.3, 0.6, 1.0) * density`; the ray stops early at 95% opacity, and leftover light shows
+  the background. Samples at or below 0.001 density are skipped.
+- Kernel code uses `f32` from `common.h` (nvcc gets `-Iexternal/devtools`), not `float`;
+  CUDA's own vector types (`float3`) stay as they are.
+- `raymarch_params.h` is plain C data (`f32`s, unsigneds) passed by value to
   `cuLaunchKernel`; keep it free of Eigen and CUDA vector types so both compilers agree on
-  its layout.
+  its layout. Headers the kernels include are listed in `cuda_headers` in `build.cpp` so a
+  change to them rebuilds the PTX.
 - `CudaInterop` has no unmap: a resize leaks the old pixel buffer's CUDA import until the
   renderer is destroyed. The window is a fixed size, so this does not happen today.
 - The destructor drains CUDA and the graphics queue, then releases CUDA *before* the

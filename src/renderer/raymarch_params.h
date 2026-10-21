@@ -1,28 +1,30 @@
 #pragma once
 
 // Plain data shared by the C++ renderer and the CUDA kernels (electron_cloud_renderer.cu),
-// passed by value to cuLaunchKernel. Only floats and unsigneds, no Eigen and no CUDA vector
+// passed by value to cuLaunchKernel. Only f32s and unsigneds, no Eigen and no CUDA vector
 // types, so both compilers lay it out identically.
 
+#include <common.h>
+
 struct RayCamera {
-    float position[3]; // where every ray starts (world space)
-    float forward[3];  // unit view direction
-    float right[3];    // unit, screen +x
-    float up[3];       // unit, screen +y
-    float tan_half_fov_y;
-    float aspect;      // width / height
+    f32 position[3]; // where every ray starts (world space)
+    f32 forward[3];  // unit view direction
+    f32 right[3];    // unit, screen +x
+    f32 up[3];       // unit, screen +y
+    f32 tan_half_fov_y;
+    f32 aspect;      // width / height
 };
 
 struct RaySphere {
-    float center[3];
-    float radius;
+    f32 center[3];
+    f32 radius;
 };
 
 struct RaymarchParams {
     RayCamera camera;
     RaySphere sphere;
-    float step;         // distance advanced per march step (delta t)
-    float max_distance; // a ray gives up this far from the camera
+    f32 step;         // distance advanced per march step (delta t)
+    f32 max_distance; // a ray gives up this far from the camera
     unsigned width;     // output size in pixels; the pixel buffer is width * height RGBA8
     unsigned height;
 };
