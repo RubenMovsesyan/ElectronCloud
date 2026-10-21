@@ -94,9 +94,9 @@ the C++ renderer and the kernel (no mirror structs, no conversion code):
 `renderer::Orbital` (`src/renderer/orbital.hpp`, host-side only so far) names each spatial
 orbital up to n = 4 (`S1`, `P2x`, `D3x2_y2`, `F4xyz`, ...), and `orbitalFor(n, l, m)` maps
 quantum numbers to it (`nullopt` if invalid or n > 4). It is `constexpr`, and the enum is
-declared in n, l, m order, which the lookup's index formula relies on. The m -> real-orbital
-assignment follows the project's table; note it is not one consistent convention across
-p, d and f (see the header).
+declared in n, l, m order, which the lookup's index formula relies on. m -> real orbital
+follows the usual convention (m < 0 = sin(|m| phi), m > 0 = cos(|m| phi): m -1 is p_y,
+m +1 is p_x, and so on -- see the header); the wave function must use the same one.
 
 The wave function is not in yet: `checkRay()` takes the atom and the time but still returns
 a hard-coded test sphere (centre 0, radius 1, density 1 at the centre falling linearly to 0).
