@@ -99,12 +99,26 @@ follows the usual convention (m < 0 = sin(|m| phi), m > 0 = cos(|m| phi): m -1 i
 m +1 is p_x, and so on -- see the header); the wave function must use the same one.
 
 The wave function, so far: `checkRay(position, atom, time)` converts the sample to
-spherical coordinates around the nucleus (`r`, polar `theta` from +z, azimuth `phi`), looks
-up the orbital of `atom.states[0]` with `orbitalFor`, and switches on it. Only `S1` is
-implemented: `|psi_100|^2 = e^(-2r/a) / (pi a^3)` with `a = bohr_radius / nuclear_charge`
-(world units; integrates to 1). Every other orbital, and invalid quantum numbers, is
-density 0. Not handled yet: `states[1]` / superpositions, `amplitude`, `phase`, and `time`
-(a single stationary state's density doesn't change with time).
+spherical coordinates around the nucleus, looks up the orbital of `atom.states[0]` with
+`orbitalFor`, and returns `psi * psi` from `waveFunction(orbital, point, a)`
+(`src/renderer/hydrogen.hpp`, `a = bohr_radius / nuclear_charge`). Implemented for every
+orbital up to n = 3 (1s .. 3d); n = 4 and invalid quantum numbers are density 0. Not
+handled yet: `states[1]` / superpositions, `amplitude`, `phase`, and `time`.
+
+- `hydrogen.hpp` is `__host__ __device__` (`HYDROGEN_HD`), so the same code runs in the
+  kernel and on the CPU -- that is how it was checked: every orbital integrates to 1,
+  different orbitals are orthogonal, and GPU renders match a CPU march pixel for pixel.
+  It returns psi, not |psi|^2, so superpositions can add wave functions before squaring.
+- `Spherical` keeps r and the **sines and cosines** of theta and phi, computed from the
+  Cartesian offset (cos theta = z / r, sin theta cos phi = x / r, ...). Calling acos /
+  atan2 / sin / cos per sample made the 1s march ~3.7x slower; the formulas only ever need
+  the sines and cosines (cos 2phi, sin 2phi via double-angle identities).
+- 3d_xy / 3d_x^2-y^2 use 1 / (81 sqrt(2 pi a^3)). The often-printed 1 / (162 sqrt(pi a^3))
+  integrates to 1/2.
+- Densities are absolute and differ a lot between orbitals: peak |psi|^2 (a = 0.529) is
+  ~2.15 for 1s, 0.27 for 2s, 0.036 for 2p, 0.011 for 3p, 0.004-0.005 for 3d, and they
+  reach (|psi|^2 > 0.001) out to ~2 A (1s), ~4.5 A (n = 2), ~7 A (n = 3). With absolute
+  `min_density` / colour, n = 3 orbitals are faint.
 
 World units are angstroms: `main.cpp` sets `bohr_radius = 0.529`. The 1s density peaks at
 ~2.15 at the nucleus and drops below `min_density` (0.001) at ~2.0 A, so `bounds_radius`

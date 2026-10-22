@@ -86,6 +86,7 @@ int main(int argc, char** argv) {
     const std::vector<std::string> cuda_headers = {
         "src/renderer/raymarch_params.h",
         "src/renderer/orbital.hpp",
+        "src/renderer/hydrogen.hpp",
     };
     Command mkdir_cuda({"mkdir", "-p", BUILD_DIR + "/cuda"});
     mkdir_cuda.exec();

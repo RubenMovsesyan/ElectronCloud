@@ -2,6 +2,7 @@
 // CUDA support (.build/cuda/electron_cloud_renderer.ptx); the renderer JIT-loads it at
 // runtime with cuModuleLoad, so device code never touches the C++ link.
 
+#include <renderer/hydrogen.hpp>
 #include <renderer/orbital.hpp>
 #include <renderer/raymarch_params.h>
 
@@ -31,38 +32,13 @@ __device__ bool raySphere(const Vector3f& origin, const Vector3f& direction, con
     return far > 0.0f;
 }
 
-constexpr f32 kPi = 3.14159265358979323846f;
-
-// A point relative to the nucleus, in physics convention: `r` the distance, `theta` the polar
-// angle down from +z (0 .. pi), `phi` the azimuth from +x towards +y (-pi .. pi).
-struct Spherical {
-    f32 r;
-    f32 theta;
-    f32 phi;
-};
-
-__device__ Spherical toSpherical(const Vector3f& offset) {
-    const f32 r = offset.norm();
-    // At the nucleus the angles are undefined; any value works since every orbital's angular
-    // part is multiplied by a radial part that is finite there.
-    const f32 theta = r > 0.0f ? acosf(fminf(fmaxf(offset.z() / r, -1.0f), 1.0f)) : 0.0f;
-    const f32 phi = atan2f(offset.y(), offset.x());
-    return Spherical{r, theta, phi};
-}
-
-// |psi_100|^2, the 1s orbital: psi_100(r) = 1 / sqrt(pi a^3) * e^(-r / a), so
-// |psi_100|^2 = e^(-2r / a) / (pi a^3). `a` is the Bohr radius scaled by the nuclear charge
-// (a0 / Z), in world units; Z = 1 is hydrogen and gives exactly a0.
-__device__ f32 density1s(const Spherical& point, f32 a) {
-    return expf(-2.0f * point.r / a) / (kPi * a * a * a);
-}
-
 // The electron cloud's density -- |psi|^2 -- at world-space `position` and simulation `time`
-// (atomic units).
+// (atomic units). The sample is converted to spherical coordinates around the nucleus, the
+// orbital comes from the atom's first state's quantum numbers, and hydrogen.hpp's
+// waveFunction() gives psi for it. Implemented up to n = 3; n = 4 orbitals and invalid
+// quantum numbers are empty space.
 //
-// The orbital comes from the atom's first state's quantum numbers; only 1s is implemented, and
-// every other orbital (or invalid quantum numbers) is empty space for now. `time` isn't used
-// yet: a single stationary state's |psi|^2 doesn't change with time.
+// `time` isn't used yet: a single stationary state's |psi|^2 doesn't change with time.
 __device__ f32 checkRay(const Vector3f& position, const Atom& atom, f64 time) {
     (void)time;
 
@@ -70,12 +46,8 @@ __device__ f32 checkRay(const Vector3f& position, const Atom& atom, f64 time) {
     const f32 a = atom.bohr_radius / atom.nuclear_charge;
 
     const QuantumState& state = atom.states[0];
-    switch (orbitalFor(state.n, state.l, state.m).value_or(Orbital::Count)) {
-        case Orbital::S1:
-            return density1s(point, a);
-        default:
-            return 0.0f;
-    }
+    const f32 psi = waveFunction(orbitalFor(state.n, state.l, state.m).value_or(Orbital::Count), point, a);
+    return psi * psi; // real orbitals: |psi|^2 = psi^2
 }
 
 __device__ u32 packRgba8(const Vector3f& color) {
