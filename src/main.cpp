@@ -1,8 +1,11 @@
 #define RLOG_IMPLEMENTATION
 #include <rlog.h>
 
+#include <animation/timeline.hpp>
 #include <app/application.hpp>
+#include <app/cli_parser.hpp>
 #include <graphics/presenter.hpp>
+#include <graphics/recorder.hpp>
 #include <graphics/primitives/scene/camera.hpp>
 #include <renderer/electron_cloud_renderer.hpp>
 #include <renderer/hydrogen.hpp>
@@ -22,14 +25,26 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <numbers>
 #include <optional>
+#include <string>
 
-// ElectronCloud: our own CUDA ray marcher (src/renderer/) plugged into GameEngine's Presenter,
-// with a fly camera marking where the rays start, an FPS counter in the top-left corner and a
-// debug panel to pick the orbital and play transitions between orbitals.
+// ElectronCloud: our own CUDA ray marcher (src/renderer/) plugged into GameEngine, in one of
+// two modes picked on the command line.
 //
+// Live (default): shown through a graphics::Presenter, with a fly camera marking where the
+// rays start, an FPS counter in the top-left corner and a debug panel to pick the orbital and
+// play transitions between orbitals.
 //   WASD move, Space / Left Ctrl up / down, ESC toggles mouse-look (release it to use the
 //   debug panel).
+//
+// Record (--record <file.mp4>): a scripted animation (recordingScript()) rendered through a
+// graphics::Recorder into a video, one frame every 1 / fps of animation time however long it
+// takes to render, then the program exits. The window shows a preview.
+//   ./run --record out.mp4 [--from 1s] [--to 2p_z] [--elevation 20] [--fps 60] [--width 1920] [--height 1080]
+//   --elevation is the camera's angle above the x-z plane in degrees; 89 is a top view.
+//   --intensity is the laser intensity in W/cm^2 (default 1e12): weaker light transitions more
+//   slowly, so the cloud sloshes more times on the way (sloshes ~ 1 / sqrt(intensity)).
 
 namespace {
 
@@ -41,6 +56,24 @@ constexpr f32 kPitchLimit = 1.5533f;    // ~89 degrees
 constexpr f32 kFovY = 1.0472f;          // 60 degrees
 
 const Eigen::Vector3f kWorldUp{0.0f, 1.0f, 0.0f};
+
+// The recording script's camera: an orbit around the nucleus at a fixed elevation, turning at a
+// fixed rate, with its distance keyframed.
+constexpr f32 kRecordSpinRate = 0.8f;          // radians per second of animation
+constexpr f32 kDefaultElevationDegrees = 20.0f; // above the x-z plane
+// The camera builds its sideways direction from world up, which is undefined looking straight
+// along it, so a "top view" stops just short of 90 degrees (indistinguishable on screen).
+constexpr f32 kMaxElevationDegrees = 89.0f;
+
+// How far the recording camera orbits from the nucleus to frame a cloud of shell n: the
+// cloud's reach (~1.8 / 6.6 / 13 A) fits inside the 60-degree view with some margin.
+f32 cameraDistanceFor(i32 n) {
+    switch (n) {
+        case 1: return 6.0f;
+        case 2: return 16.0f;
+        default: return 26.0f;
+    }
+}
 
 f32 aspectOf(const app::Context& context) {
     return context.height() > 0 ? static_cast<f32>(context.width()) / static_cast<f32>(context.height()) : 1.0f;
@@ -130,7 +163,18 @@ struct ElectronCloud {
             renderer::RaymarchSettings{.step_size = 0.02f, .max_distance = 100.0f, .min_density = 0.001f, .opacity_cutoff = 0.95f},
             appearance,
         };
-        graphics::Presenter presenter;
+
+        // Live mode shows frames through a Presenter; record mode through a Recorder, which also
+        // writes them to the video. Exactly one is set.
+        std::optional<graphics::Presenter> presenter;
+        std::optional<graphics::Recorder> recorder;
+
+        // Record mode's script: cues on a timeline plus the camera's keyframed distance, both
+        // driven by frame index / fps.
+        std::optional<animation::Timeline> timeline;
+        std::optional<animation::Track<f32>> camera_distance;
+        f32 camera_elevation = kDefaultElevationDegrees * std::numbers::pi_v<f32> / 180.0f; // radians
+        u64 recorded_frames = 0;
 
         std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
 
@@ -140,9 +184,153 @@ struct ElectronCloud {
             context.debugUI().setVisible(true);
             // Build the dipole table now (~0.2 s) rather than on the first frame that needs it.
             renderer::DipoleTable::get();
+
+            app::CliParser cli{context.argc(), context.argv()};
+            cli.defineArg<std::string>("record");
+            cli.defineArg<std::string>("from");
+            cli.defineArg<std::string>("to");
+            cli.defineArg<f32>("elevation");
+            cli.defineArg<f64>("intensity");
+            cli.defineArg<u32>("fps");
+            cli.defineArg<u32>("width");
+            cli.defineArg<u32>("height");
+            cli.parse();
+
+            if (const std::optional<std::string> path = cli.arg<std::string>("record")) {
+                graphics::Recorder::Config config{.path = *path};
+                if (auto v = cli.arg<u32>("fps"); v && *v > 0) config.fps = *v;
+                if (auto v = cli.arg<u32>("width"); v && *v > 0) config.width = *v;
+                if (auto v = cli.arg<u32>("height"); v && *v > 0) config.height = *v;
+                // The orbitals the script transitions between, by name ("1s", "2p_z", "3d_z2", ...).
+                auto orbitalArg = [&](const char* name, renderer::Orbital fallback) {
+                    const std::optional<std::string> text = cli.arg<std::string>(name);
+                    if (!text) {
+                        return fallback;
+                    }
+                    const std::optional<renderer::Orbital> orbital = renderer::orbitalFromName(*text);
+                    if (!orbital || !renderer::hasWaveFunction(*orbital)) {
+                        RLOG(LL_FATAL, "--%s %s: not an orbital with a wave function (1s, 2s, 2p_x, ..., 3d_x2-y2)", name, text->c_str());
+                    }
+                    return *orbital;
+                };
+                const renderer::Orbital from = orbitalArg("from", renderer::Orbital::S1);
+                const renderer::Orbital to = orbitalArg("to", renderer::Orbital::P2z);
+                if (from == to) {
+                    RLOG(LL_FATAL, "--from and --to are both %s", renderer::orbitalName(from));
+                }
+                if (const std::optional<f32> degrees = cli.arg<f32>("elevation")) {
+                    const f32 clamped = std::clamp(*degrees, -kMaxElevationDegrees, kMaxElevationDegrees);
+                    if (clamped != *degrees) {
+                        RLOG(LL_WARN, "--elevation %.1f: clamped to %.1f (the camera can't look straight along world up)", *degrees, clamped);
+                    }
+                    camera_elevation = clamped * std::numbers::pi_v<f32> / 180.0f;
+                }
+                if (const std::optional<f64> intensity = cli.arg<f64>("intensity")) {
+                    if (*intensity <= 0.0) {
+                        RLOG(LL_FATAL, "--intensity must be > 0 W/cm^2");
+                    }
+                    laser_intensity = static_cast<f32>(*intensity);
+                }
+                recorder.emplace(config);
+                recordingScript(from, to);
+            } else {
+                presenter.emplace();
+            }
         }
 
         void frame(app::Context& context) {
+            if (recorder) {
+                recordFrame(context);
+            } else {
+                liveFrame(context);
+            }
+        }
+
+        // The recording: spin around `from` for 4 s, keep spinning through a 10 s transition to
+        // `to` (4 s -> 14 s), spin around `to` for 7 more seconds, stop at 21 s. The camera's
+        // distance eases between the two clouds' sizes during the transition.
+        void recordingScript(renderer::Orbital from, renderer::Orbital to) {
+            constexpr f64 kInitialSpin = 4.0;
+            constexpr f64 kTransition = 10.0;
+            constexpr f64 kFinalSpin = 7.0;
+            constexpr f64 kTransitionStart = kInitialSpin;
+            constexpr f64 kTransitionEnd = kTransitionStart + kTransition;
+            constexpr f64 kEnd = kTransitionEnd + kFinalSpin;
+
+            selectOrbital(from);
+            transition_seconds = static_cast<f32>(kTransition);
+            const f32 near = cameraDistanceFor(renderer::quantumNumbersOf(from).n);
+            const f32 far = cameraDistanceFor(renderer::quantumNumbersOf(to).n);
+            camera_distance.emplace(std::vector<animation::Key<f32>>{
+                {0.0, near}, {kTransitionStart, near}, {kTransitionEnd, far}, {kEnd, far}});
+            timeline.emplace(kEnd, std::vector<animation::Timeline::Cue>{
+                                       {kTransitionStart, "transition", [this, to]() { startTransition(to); }},
+                                   });
+            RLOG(LL_INFO, "recording %s -> %s%s", renderer::orbitalName(from), renderer::orbitalName(to),
+                 renderer::DipoleTable::get().allowed(from, to) ? "" : " (forbidden: animated with a stand-in dipole)");
+            const renderer::TransitionPlan plan = renderer::planTransition(from, to, atom.nuclear_charge, laser_intensity);
+            RLOG(LL_INFO, "laser %.2e W/cm^2: the transition takes %.3g fs and sloshes %.1f times", static_cast<f64>(laser_intensity),
+                 plan.duration * renderer::kAtomicUnitTimeSeconds * 1e15, plan.sloshes);
+        }
+
+        // One frame of the recording, at exactly recorded_frames / fps into the script.
+        void recordFrame(app::Context& context) {
+            const f64 dt = recorder->frameTime();
+            const f64 time = static_cast<f64>(recorded_frames) * dt;
+
+            // A playing transition moves first, so one a cue starts this frame shows its first
+            // moment (pure start orbital) rather than one step in.
+            advanceTransition(dt);
+            timeline->setTime(time);
+            updateCloudColor();
+
+            // Orbit the nucleus, always looking at it.
+            const f32 azimuth = kRecordSpinRate * static_cast<f32>(time);
+            const f32 distance = camera_distance->sample(time);
+            const Eigen::Vector3f offset{std::cos(camera_elevation) * std::sin(azimuth), std::sin(camera_elevation), std::cos(camera_elevation) * std::cos(azimuth)};
+            *camera.mutablePosition() = atom.nucleus + offset * distance;
+            *camera.mutableDirection() = -offset;
+            camera.setAspectRatio(static_cast<f32>(recorder->config().width) / static_cast<f32>(recorder->config().height));
+
+            renderer.beginFrame(camera, simulation_time);
+            renderer.submit(atom);
+            recorder->present(renderer, [&]() {
+                context.debugUI().draw(context.width(), context.height(), dt, sapp_dpi_scale(), [&]() {
+                    drawFpsCounter();
+                    drawRecordingPanel(time);
+                });
+            });
+            recorded_frames++;
+
+            const u64 total_frames = static_cast<u64>(std::llround(timeline->duration() / dt));
+            if (recorded_frames >= total_frames) {
+                recorder->finish();
+                context.quit();
+            }
+        }
+
+        // Below the FPS counter while recording: which frame of how many, and where in the script.
+        void drawRecordingPanel(f64 time) {
+            ImGui::SetNextWindowPos(ImVec2(10.0f, 50.0f), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Recording", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                const u64 total_frames = static_cast<u64>(std::llround(timeline->duration() / recorder->frameTime()));
+                char label[64];
+                std::snprintf(label, sizeof(label), "frame %llu / %llu", static_cast<unsigned long long>(recorded_frames + 1),
+                              static_cast<unsigned long long>(total_frames));
+                ImGui::ProgressBar(static_cast<f32>(recorded_frames + 1) / static_cast<f32>(total_frames), ImVec2(260.0f, 0.0f), label);
+                ImGui::Text("t = %.2f s of %.2f s, %u fps", time, timeline->duration(), recorder->config().fps);
+                ImGui::Text("%s", recorder->config().path.c_str());
+                if (transition) {
+                    ImGui::Text("%s -> %s", renderer::orbitalName(transition->from), renderer::orbitalName(transition->to));
+                } else {
+                    ImGui::Text("%s", renderer::orbitalName(currentOrbital()));
+                }
+            }
+            ImGui::End();
+        }
+
+        // One frame of live mode: wall-clock time, fly camera, debug panel.
+        void liveFrame(app::Context& context) {
             const auto now = std::chrono::steady_clock::now();
             const f32 dt = std::chrono::duration<f32>(now - last_time).count();
             last_time = now;
@@ -157,7 +345,7 @@ struct ElectronCloud {
 
             renderer.beginFrame(camera, simulation_time);
             renderer.submit(atom);
-            presenter.present(renderer, [&]() {
+            presenter->present(renderer, [&]() {
                 context.debugUI().draw(context.width(), context.height(), dt, sapp_dpi_scale(), [&]() {
                     drawFpsCounter();
                     drawDebugPanel();
@@ -197,10 +385,10 @@ struct ElectronCloud {
             simulation_time = 0.0;
         }
 
-        // Moves a playing transition on by `dt` real seconds and updates the atom's weights. When
-        // it reaches the end the atom is left in the target orbital alone, which is exactly what
-        // the superposition looks like at that moment, so nothing jumps.
-        void advanceTransition(f32 dt) {
+        // Moves a playing transition on by `dt` seconds of playback and updates the atom's
+        // weights. When it reaches the end the atom is left in the target orbital alone, which is
+        // exactly what the superposition looks like at that moment, so nothing jumps.
+        void advanceTransition(f64 dt) {
             if (!transition) {
                 simulation_time = 0.0;
                 return;
@@ -209,7 +397,9 @@ struct ElectronCloud {
             const f64 progress = std::min(transition->elapsed_seconds / transition->playback_seconds, 1.0);
             simulation_time = progress * transition->plan.duration;
             atom.superposition = renderer::superpositionAt(transition->plan, simulation_time);
-            if (progress >= 1.0) {
+            // A tiny tolerance: in record mode the elapsed time is a sum of 1 / fps steps, which
+            // can land a hair under the duration on the frame that should end it.
+            if (progress >= 1.0 - 1e-9) {
                 const renderer::Orbital to = transition->to;
                 transition.reset();
                 selectOrbital(to);

@@ -19,6 +19,7 @@
   <a href="index.html#build">Building</a>
   <a href="index.html#renderer">The renderer</a>
   <a href="index.html#transitions">Transitions</a>
+  <a href="index.html#recording">Recording</a>
   <a href="index.html#engine">Working on GameEngine</a>
 </nav>
 
@@ -174,6 +175,37 @@ accumulated_opacity += transmittance * alpha;</code></pre>
   Dipoles are integrated numerically from the same wave functions the renderer draws, so the
   flags are exact for these orbitals. Forbidden transitions (dipole 0) would never happen with
   light; they are animated as if the dipole were 1 e a0 and marked in the menu.
+</p>
+
+<h2 id="recording">Recording</h2>
+<p>
+  <code>./run --record out.mp4</code> renders a scripted animation to a video instead of
+  running live: frames go through GameEngine&rsquo;s <code>graphics::Recorder</code>, which
+  shows a preview in the window and pipes each frame to ffmpeg. Time advances by exactly
+  1/fps per frame, so the video plays in real time however long frames take to render.
+  The script lives in <code>ElectronCloud::recordingScript()</code>, built from the keyframe
+  system in <code>src/animation/timeline.hpp</code>:
+</p>
+<pre><code>camera_distance.emplace(std::vector&lt;animation::Key&lt;f32&gt;&gt;{
+    {0.0, 6.0f}, {kTransitionStart, 6.0f}, {kTransitionEnd, 16.0f}, {kEnd, 16.0f}});
+timeline.emplace(kEnd, std::vector&lt;animation::Timeline::Cue&gt;{
+    {kTransitionStart, "1s -&gt; 2p_z", [this]() { startTransition(renderer::Orbital::P2z); }},
+});</code></pre>
+<p>
+  Orbit the 1s cloud for 4 s, play a 10 s transition to 2p_z while the camera keeps
+  orbiting and eases out, then 7 more seconds around 2p_z (21 s in all). Options:
+</p>
+<ul>
+  <li><code>--from</code> / <code>--to</code>: the orbitals, by the names in the menus
+    (<code>2p_z</code>, <code>3d_z2</code>, ...); default 1s &rarr; 2p_z.</li>
+  <li><code>--elevation</code>: the camera&rsquo;s angle above the x-z plane in degrees
+    (default 20; 89 is a top view).</li>
+  <li><code>--intensity</code>: the laser intensity in W/cm&sup2; (default 10<sup>12</sup>). Weaker
+    light transitions more slowly, so the cloud sloshes more (~1/&radic;intensity).</li>
+  <li><code>--fps</code>, <code>--width</code>, <code>--height</code>.</li>
+</ul>
+<pre><code>./run --record ~/Downloads/x.mp4 --from 2p_z --to 3d_z2 --elevation 89 --intensity 1.75e10</code></pre>
+<p>
 </p>
 
 <h2 id="engine">Working on GameEngine</h2>

@@ -137,6 +137,7 @@ int main(int argc, char** argv) {
         "src/gpu/cross_semaphore.cpp",
         "src/gpu/cuda_interop.cpp",
         "src/gpu/shared_instance_buffer.cpp",
+        "src/gpu/buffer_readback.cpp",
 
         "external/imgui/imgui.cpp",
         "external/imgui/imgui_draw.cpp",
@@ -162,6 +163,7 @@ int main(int argc, char** argv) {
         "src/graphics/renderers/clear_renderer.cpp",
 
         "src/graphics/presenter.cpp",
+        "src/graphics/recorder.cpp",
 
         "src/scene/model.cpp",
 
@@ -174,6 +176,8 @@ int main(int argc, char** argv) {
         "src/app/cli_parser.cpp",
         "src/app/input_state.cpp",
         "src/app/debug_ui.cpp",
+
+        "src/utils/video_encoder.cpp",
     };
 
     // ElectronCloud's own sources. Adding a file means adding a line here -- no globbing.

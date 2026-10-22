@@ -3,6 +3,7 @@
 #include <common.h>
 
 #include <optional>
+#include <string_view>
 
 namespace renderer {
 
@@ -108,7 +109,18 @@ constexpr const char* orbitalName(Orbital orbital) {
     return index < static_cast<u32>(Orbital::Count) ? kNames[index] : "invalid";
 }
 
+// The inverse of orbitalName: "2p_z" -> Orbital::P2z. nullopt for an unknown name.
+constexpr std::optional<Orbital> orbitalFromName(std::string_view name) {
+    for (u32 i = 0; i < static_cast<u32>(Orbital::Count); i++) {
+        if (name == orbitalName(static_cast<Orbital>(i))) {
+            return static_cast<Orbital>(i);
+        }
+    }
+    return std::nullopt;
+}
+
 static_assert(static_cast<u32>(Orbital::Count) == 30, "Orbital must list every orbital up to n = 4");
+static_assert(orbitalFromName("3d_z2") == Orbital::D3z2 && !orbitalFromName("2d"));
 static_assert(orbitalFor(1, 0, 0) == Orbital::S1);
 static_assert(orbitalFor(2, 1, -1) == Orbital::P2y);
 static_assert(orbitalFor(2, 1, 1) == Orbital::P2x);

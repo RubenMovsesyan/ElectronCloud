@@ -12,6 +12,7 @@ external/             one dependency per directory, each a git submodule
   devtools/           header-only C utilities: rlog.h, common.h (u32, f32, ...), attr.h
   GameEngine/         the engine, cloned from its remote, with its own submodules (--recursive)
 src/                  ElectronCloud's own code; src/main.cpp is the entry point
+  animation/          keyframe system for scripted recordings (Track, Timeline)
   renderer/           ElectronCloudRenderer: C++, its CUDA kernels (.cu), the params struct
                       both share (raymarch_params.h), and shaders/ (sokol-shdc GLSL)
 docs/                 HTML docs (dark mode), docs/index.html is the overview
@@ -28,7 +29,44 @@ finds none.
 git submodule update --init --recursive   # after cloning
 ./run                                     # bootstrap ./build if needed, build, launch
 ./run clean                               # wipe .build first
+./run --record out.mp4 [--from 1s] [--to 2p_z] [--elevation 20] [--intensity 1e12] \
+      [--fps 60] [--width 1920] [--height 1080]   # record mode (needs ffmpeg)
 ```
+
+## Modes
+
+`src/main.cpp` runs in one of two modes, picked in the State's constructor from the command
+line:
+
+- **Live** (default): `graphics::Presenter`, wall-clock time, fly camera, the debug panel.
+- **Record** (`--record <file>`): `graphics::Recorder` (GameEngine) renders each frame at the
+  video size, shows a preview in the window and writes the frame to the video through
+  ffmpeg (fatal at startup if ffmpeg is missing). Everything advances by exactly
+  `recorder->frameTime()` (1 / fps) per frame and the script's time is
+  `frame index / fps`, so the video is deterministic and plays in real time however long
+  frames take to render. The ImGui overlay (FPS + a progress panel) is on the window only,
+  never in the video. When the script ends the Recorder is finished and the app quits.
+
+The script is hard-coded in `ElectronCloud::recordingScript()` with the keyframe system in
+`src/animation/timeline.hpp`: `Track<T>` (values eased between keys, held outside them) and
+`Timeline` (cues fired as time passes, plus an end time). Today: 21 s -- orbit the `--from`
+orbital for 4 s, at 4 s a 10 s transition to `--to` (the cue calls `startTransition`), then
+7 more seconds on it; the durations are named constants in `recordingScript()`. The camera
+orbits at 0.8 rad/s at `--elevation` degrees (default 20; clamped to +-89 because the camera
+basis comes from world up -- 89 is a top view) and its distance eases between the two shells'
+framing distances (`cameraDistanceFor`: 6 / 16 / 26 A for n = 1 / 2 / 3) across the
+transition.
+
+Record-mode options:
+- `--from` / `--to`: orbital names as in the menus (`1s`, `2p_z`, `3d_x2-y2`, ...;
+  `orbitalFromName`), default 1s -> 2p_z. Unknown names or from == to are fatal; forbidden
+  pairs record with a log note.
+- `--intensity` (W/cm^2, default 1e12): the physical knob for how much the cloud sloshes,
+  ~1 / sqrt(intensity). The log prints the slosh count and real duration. 2p_z -> 3d_z2:
+  2.6 sloshes at 1e12, 20 at 1.75e10. Past ~150 sloshes in a 10 s transition (fewer than ~4
+  frames each) they alias into flicker. A playing transition advances before the cues fire each frame, so a
+transition started on a frame shows its first moment, and the end-of-transition check has a
+1e-9 tolerance because elapsed time is a sum of 1 / fps steps.
 
 `./build` rebuilds itself when `build.cpp` or `buildcpp/build.hpp` changes and writes
 `compile_commands.json`. The binary is `.build/bin/electron_cloud`.
