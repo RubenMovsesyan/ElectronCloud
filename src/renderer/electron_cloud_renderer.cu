@@ -100,7 +100,8 @@ extern "C" __global__ void raymarch(u32* pixels, renderer::RaymarchParams params
         const f32 end = fminf(exit, march.max_distance);
 
         for (f32 distance = start + march.step_size; distance <= end; distance += march.step_size) {
-            const f32 density = checkRay(camera.position + direction * distance, atom, params.time);
+            // Scaled so this orbital's peak is 1 (see RaymarchParams::density_scale).
+            const f32 density = checkRay(camera.position + direction * distance, atom, params.time) * params.density_scale;
             if (density <= march.min_density) {
                 continue;
             }

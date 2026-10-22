@@ -115,10 +115,19 @@ handled yet: `states[1]` / superpositions, `amplitude`, `phase`, and `time`.
   the sines and cosines (cos 2phi, sin 2phi via double-angle identities).
 - 3d_xy / 3d_x^2-y^2 use 1 / (81 sqrt(2 pi a^3)). The often-printed 1 / (162 sqrt(pi a^3))
   integrates to 1/2.
-- Densities are absolute and differ a lot between orbitals: peak |psi|^2 (a = 0.529) is
-  ~2.15 for 1s, 0.27 for 2s, 0.036 for 2p, 0.011 for 3p, 0.004-0.005 for 3d, and they
-  reach (|psi|^2 > 0.001) out to ~2 A (1s), ~4.5 A (n = 2), ~7 A (n = 3). With absolute
-  `min_density` / colour, n = 3 orbitals are faint.
+- **Density is scaled so every orbital peaks at 1.** Absolute peaks differ a lot (|psi|^2 at
+  a = 0.529: ~2.15 for 1s, 0.036 for 2p, 0.004 for 3d), which left everything but 1s
+  invisible. `ElectronCloudRenderer::submit` computes `peakDensity(orbital, a)` (CPU,
+  ~0.3 ms: the brightest direction on a sphere, then the brightest radius along it --
+  every orbital is radial * angular) only when the orbital or `a` changes, and passes
+  `RaymarchParams::density_scale = 1 / peak`. The kernel multiplies each sample by it, so
+  `min_density`, `absorption` and the colour all work on 0 .. 1 density; `checkRay` itself
+  still returns the physical |psi|^2.
+- At 0.1% of the peak, clouds reach ~1.8 A (n = 1), ~6.6 A (n = 2), ~13 A (n = 3);
+  `boundsRadiusFor` in `main.cpp` uses 2.5 / 7.5 / 14. A ray also stops at `max_distance`
+  from the camera, so whole n = 3 clouds need it >= the camera's distance + 14.
+- Known look: multi-shell s orbitals (2s, 3s) show mostly as a dot. Their peak is a spike
+  at the nucleus, so scaling by it leaves the outer shells faint.
 
 World units are angstroms: `main.cpp` sets `bohr_radius = 0.529`. The 1s density peaks at
 ~2.15 at the nucleus and drops below `min_density` (0.001) at ~2.0 A, so `bounds_radius`
@@ -196,7 +205,7 @@ GameEngine doesn't yet support everything ElectronCloud needs, so it is develope
 - A "Debug" ImGui panel below the FPS counter has an orbital dropdown listing every orbital
   with a wave function (`hasWaveFunction`); picking one sets `atom.states[0]` to its
   `|n l m>` (`quantumNumbersOf`) and `bounds_radius` to fit the shell
-  (`boundsRadiusFor`: 2.5 / 6 / 9 A for n = 1 / 2 / 3). Release mouse-look (ESC) to use it.
+  (`boundsRadiusFor`: 2.5 / 7.5 / 14 A for n = 1 / 2 / 3). Release mouse-look (ESC) to use it.
 - An FPS counter (ImGui, through the engine's `DebugUI`) is drawn in the top-left corner as
   the Presenter's overlay. `DebugUI` starts hidden, so the State's constructor calls
   `setVisible(true)`. The number is ImGui's 60-frame average; with vsync it caps at the

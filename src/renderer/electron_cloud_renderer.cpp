@@ -1,5 +1,8 @@
 #include <renderer/electron_cloud_renderer.hpp>
 
+#include <renderer/hydrogen.hpp>
+#include <renderer/orbital.hpp>
+
 #include <rlog.h>
 
 #include <Eigen/Dense>
@@ -111,6 +114,17 @@ void ElectronCloudRenderer::beginFrame(const graphics::primitives::scene::Camera
 void ElectronCloudRenderer::submit(const Atom& atom) {
     m_params.atom = atom;
     m_params.atom.state_count = std::clamp<u32>(atom.state_count, 1, static_cast<u32>(atom.states.size()));
+
+    // The peak depends only on the orbital and a, so it's found once per change, not per frame.
+    const QuantumState& state = atom.states[0];
+    const Orbital orbital = orbitalFor(state.n, state.l, state.m).value_or(Orbital::Count);
+    const f32 a = atom.bohr_radius / atom.nuclear_charge;
+    if (orbital != m_scaled_orbital || a != m_scaled_a) {
+        const f32 peak = peakDensity(orbital, a);
+        m_params.density_scale = peak > 0.0f ? 1.0f / peak : 0.0f;
+        m_scaled_orbital = orbital;
+        m_scaled_a = a;
+    }
 }
 
 bool ElectronCloudRenderer::rebuildTargets(int width, int height) {

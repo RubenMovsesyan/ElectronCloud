@@ -73,6 +73,10 @@ struct RaymarchParams {
     Atom atom;
     RaymarchSettings march;
     Appearance appearance;
+    // 1 / the orbital's peak |psi|^2, so sampled density runs 0 .. 1 for every orbital:
+    // min_density, absorption and the colour all work on that scaled density. Derived from
+    // the atom by the renderer (submit), not set by the app.
+    f32 density_scale = 1.0f;
     f64 time = 0.0; // simulation time, atomic units of time (hbar / E_h); f64 so phases stay exact as it grows
     u32 width = 0;  // output size in pixels; the pixel buffer is width * height RGBA8
     u32 height = 0;
@@ -86,7 +90,8 @@ static_assert(sizeof(RayCamera) == 56, "RayCamera layout changed");
 static_assert(sizeof(Atom) == 68, "Atom layout changed");
 static_assert(sizeof(RaymarchSettings) == 16, "RaymarchSettings layout changed");
 static_assert(sizeof(Appearance) == 28, "Appearance layout changed");
-static_assert(offsetof(RaymarchParams, time) == 168, "RaymarchParams layout changed");
-static_assert(sizeof(RaymarchParams) == 184, "RaymarchParams layout changed");
+static_assert(offsetof(RaymarchParams, density_scale) == 168, "RaymarchParams layout changed");
+static_assert(offsetof(RaymarchParams, time) == 176, "RaymarchParams layout changed");
+static_assert(sizeof(RaymarchParams) == 192, "RaymarchParams layout changed");
 
 } // namespace renderer

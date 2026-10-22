@@ -129,4 +129,52 @@ HYDROGEN_HD inline f32 waveFunction(Orbital orbital, const Spherical& point, f32
     }
 }
 
+// The largest |psi|^2 anywhere for `orbital`, with a = a0 / Z in world units -- what the
+// renderer divides by so every orbital uses the full brightness range. Host-only (it's run
+// once per orbital change, not per sample); 0 for orbitals without a wave function.
+//
+// Every orbital here is radial(r) * angular(theta, phi), so the peak is the largest angular
+// value combined with the largest radial value along that direction: find the brightest
+// direction on a sphere of radius r0 (any r0 where the radial part isn't 0), then the
+// brightest radius along it. ~20k evaluations, well under a millisecond.
+inline f32 peakDensity(Orbital orbital, f32 a) {
+    if (!hasWaveFunction(orbital)) {
+        return 0.0f;
+    }
+    auto density = [&](const Eigen::Vector3f& offset) {
+        const f32 psi = waveFunction(orbital, toSpherical(offset), a);
+        return psi * psi;
+    };
+
+    // 1. Brightest direction. 1.2345 a is clear of every radial node up to n = 3
+    //    (2s: 2a; 3s: 1.9a, 7.1a; 3p: 6a).
+    constexpr i32 kThetaSteps = 90;
+    constexpr i32 kPhiSteps = 180;
+    const f32 r0 = 1.2345f * a;
+    Eigen::Vector3f best_direction = Eigen::Vector3f::UnitZ();
+    f32 best = -1.0f;
+    for (i32 i = 0; i <= kThetaSteps; i++) {
+        const f32 theta = kPi * static_cast<f32>(i) / kThetaSteps;
+        for (i32 j = 0; j < kPhiSteps; j++) {
+            const f32 phi = 2.0f * kPi * static_cast<f32>(j) / kPhiSteps;
+            const Eigen::Vector3f direction{sinf(theta) * cosf(phi), sinf(theta) * sinf(phi), cosf(theta)};
+            const f32 value = density(direction * r0);
+            if (value > best) {
+                best = value;
+                best_direction = direction;
+            }
+        }
+    }
+
+    // 2. Brightest radius along it, from the nucleus out past where any n <= 3 orbital
+    //    matters (~30 a).
+    constexpr i32 kRadialSteps = 6000;
+    f32 peak = 0.0f;
+    for (i32 i = 0; i <= kRadialSteps; i++) {
+        const f32 r = 30.0f * a * static_cast<f32>(i) / kRadialSteps;
+        peak = fmaxf(peak, density(best_direction * r));
+    }
+    return peak;
+}
+
 } // namespace renderer

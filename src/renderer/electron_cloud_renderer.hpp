@@ -4,6 +4,7 @@
 #error "ElectronCloudRenderer needs CUDA: build.cpp defines GAMEENGINE_CUDA when it finds the toolkit"
 #endif
 
+#include <renderer/orbital.hpp>
 #include <renderer/raymarch_params.h>
 
 #include <gpu/cross_semaphore.hpp>
@@ -57,6 +58,8 @@ class ElectronCloudRenderer {
         void beginFrame(const graphics::primitives::scene::Camera& camera, f64 time);
 
         // The frame's scene: the atom whose electron cloud the rays march through.
+        // Also rescales density so the atom's orbital peaks at 1 -- recomputed (~0.3 ms, on the
+        // CPU) only when the orbital or the scaled Bohr radius changes.
         void submit(const Atom& atom);
 
         // Marches the rays at width x height pixels and returns a view of the image. Does not
@@ -71,6 +74,10 @@ class ElectronCloudRenderer {
         void waitIdle();
 
         RaymarchParams m_params; // everything the kernel gets, kept current by the calls above
+
+        // What m_params.density_scale was computed for; Count = nothing yet.
+        Orbital m_scaled_orbital = Orbital::Count;
+        f32 m_scaled_a = 0.0f;
 
         // Released explicitly in the destructor, before the Vulkan buffer and semaphores it
         // imported are destroyed.

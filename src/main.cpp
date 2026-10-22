@@ -50,13 +50,15 @@ f32 aspectOf(const app::Context& context) {
 // A small see-through panel pinned to the top-left corner. ImGui's Framerate is averaged over
 // the last 60 frames, so the number is steady enough to read.
 // How far out from the nucleus to march for an orbital of shell n, in angstroms (a0 = 0.529).
-// Each covers where that shell's |psi|^2 stays above min_density (0.001) -- ~2.0 A for n = 1,
-// ~4.5 A for n = 2, ~7 A for n = 3 -- with some margin.
+// The renderer scales density so each orbital peaks at 1; these cover where it stays above
+// min_density (0.001, so 0.1% of the peak) -- ~1.8 A for n = 1, ~6.6 A for n = 2, ~13 A for
+// n = 3 -- with some margin. A ray also stops at max_distance from the camera, so an n = 3
+// cloud needs max_distance >= the camera's distance + 14 to be seen whole.
 f32 boundsRadiusFor(i32 n) {
     switch (n) {
         case 1: return 2.5f;
-        case 2: return 6.0f;
-        default: return 9.0f;
+        case 2: return 7.5f;
+        default: return 14.0f;
     }
 }
 
