@@ -63,9 +63,10 @@ __device__ u32 packRgba8(const Vector3f& color) {
 
 // One thread per pixel. The ray is marched only where it is inside the atom's bounds (and
 // within max_distance of the camera), `step_size` at a time, sampling the cloud's density and
-// blending it front to back: each sample adds its colour, weighted by its own opacity and by
-// how much light still gets through everything in front of it. The ray stops early once it
-// is nearly opaque. Whatever light is left over shows the background.
+// blending it front to back: each sample gives off light in proportion to its density, dimmed
+// by how much the cloud in front of it has already blocked, and blocks some of the light
+// behind it in turn (see Appearance). The ray stops early once it is nearly opaque. Whatever
+// light is left over shows the background.
 //
 // extern "C" and outside the namespace so the PTX entry point is plainly named "raymarch".
 extern "C" __global__ void raymarch(u32* pixels, renderer::RaymarchParams params) {
@@ -106,12 +107,15 @@ extern "C" __global__ void raymarch(u32* pixels, renderer::RaymarchParams params
                 continue;
             }
 
-            // Beer-Lambert: how much of the light this step blocks.
-            const f32 alpha = 1.0f - expf(-density * march.step_size * appearance.absorption);
-
-            // Front to back: only the light not already blocked in front of this sample counts.
+            // Front to back: only what isn't already blocked by the cloud in front reaches us.
             const f32 transmittance = 1.0f - accumulated_opacity;
-            accumulated_color += appearance.cloud_color * (density * transmittance * alpha);
+
+            // Emission, linear in density: this step's share of the light.
+            accumulated_color += appearance.cloud_color * (appearance.brightness * density * march.step_size * transmittance);
+
+            // Absorption (Beer-Lambert), separate from emission: how much of the light behind this
+            // step it blocks. 0 absorption = fully see-through.
+            const f32 alpha = 1.0f - expf(-density * march.step_size * appearance.absorption);
             accumulated_opacity += transmittance * alpha;
 
             if (accumulated_opacity >= march.opacity_cutoff) {

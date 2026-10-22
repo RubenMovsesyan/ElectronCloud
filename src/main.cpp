@@ -99,13 +99,17 @@ struct ElectronCloud {
         // Simulation time in atomic units, advanced by kAtomicTimePerSecond per real second.
         f64 simulation_time = 0.0;
 
+        // How the cloud looks; brightness and absorption are tunable from the debug panel.
+        renderer::Appearance appearance{
+            .cloud_color = {0.3f, 0.6f, 1.0f},
+            .background_color = {0.02f, 0.02f, 0.03f},
+            .absorption = 0.5f,
+            .brightness = 1.5f,
+        };
+
         renderer::ElectronCloudRenderer renderer{
-            renderer::RaymarchSettings{.step_size = 0.02f, .max_distance = 10.0f, .min_density = 0.001f, .opacity_cutoff = 0.95f},
-            renderer::Appearance{
-                .cloud_color = {0.3f, 0.6f, 1.0f},
-                .background_color = {0.02f, 0.02f, 0.03f},
-                .absorption = 5.0f,
-            },
+            renderer::RaymarchSettings{.step_size = 0.02f, .max_distance = 100.0f, .min_density = 0.001f, .opacity_cutoff = 0.95f},
+            appearance,
         };
         graphics::Presenter presenter;
 
@@ -175,6 +179,15 @@ struct ElectronCloud {
                 }
                 const renderer::QuantumNumbers numbers = renderer::quantumNumbersOf(current);
                 ImGui::Text("n = %d, l = %d, m = %d", numbers.n, numbers.l, numbers.m);
+
+                ImGui::Separator();
+                // Brightness scales the whole image linearly; absorption only sets how much the
+                // front of the cloud hides the back (0 = see-through).
+                bool changed = ImGui::SliderFloat("Brightness", &appearance.brightness, 0.0f, 20.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+                changed |= ImGui::SliderFloat("Absorption", &appearance.absorption, 0.0f, 20.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+                if (changed) {
+                    renderer.setAppearance(appearance);
+                }
             }
             ImGui::End();
         }

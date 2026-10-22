@@ -88,7 +88,7 @@ the C++ renderer and the kernel (no mirror structs, no conversion code):
   ~4.1e16). `f64` so the phases stay exact as it grows.
 - `RaymarchSettings`: `step_size`, `max_distance`, `min_density`,
   `opacity_cutoff` -- quality against speed.
-- `Appearance`: cloud colour, background colour, absorption -- purely
+- `Appearance`: cloud colour, background colour, absorption, brightness -- purely
   cosmetic.
 
 `renderer::Orbital` (`src/renderer/orbital.hpp`, host-side only so far) names each spatial
@@ -121,7 +121,7 @@ handled yet: `states[1]` / superpositions, `amplitude`, `phase`, and `time`.
   ~0.3 ms: the brightest direction on a sphere, then the brightest radius along it --
   every orbital is radial * angular) only when the orbital or `a` changes, and passes
   `RaymarchParams::density_scale = 1 / peak`. The kernel multiplies each sample by it, so
-  `min_density`, `absorption` and the colour all work on 0 .. 1 density; `checkRay` itself
+  `min_density`, emission and absorption all work on 0 .. 1 density; `checkRay` itself
   still returns the physical |psi|^2.
 - At 0.1% of the peak, clouds reach ~1.8 A (n = 1), ~6.6 A (n = 2), ~13 A (n = 3);
   `boundsRadiusFor` in `main.cpp` uses 2.5 / 7.5 / 14. A ray also stops at `max_distance`
@@ -148,11 +148,20 @@ is 2.5.
 - The kernel: one thread per pixel. The ray is marched only between where it enters and
   leaves the atom's bounds sphere (and no further than `max_distance` from the camera),
   `step_size` at a time; the loop variable is `distance` along the ray, not time. At each
-  sample `checkRay(position, atom, time)` returns the density (`f32`). Each sample becomes
-  an opacity with Beer-Lambert (`alpha = 1 - exp(-density * step_size * absorption)`) and
-  is blended front to back with `cloud_color * density`; the ray stops early at
-  `opacity_cutoff`, samples at or below `min_density` are skipped, and leftover light shows
-  `background_color`.
+  sample `checkRay(position, atom, time)` returns the density (`f32`). Blending is
+  emission-absorption, front to back, with the two **separate and both linear in density**:
+  a sample adds `cloud_color * brightness * density * step_size`, dimmed by the
+  transmittance of the cloud in front, and blocks `alpha = 1 - exp(-density * step_size *
+  absorption)` of the light behind it. With `absorption = 0` a pixel is `brightness` times
+  the total density along its ray (an X-ray of the probability); higher absorption adds
+  depth cues. The ray stops early at `opacity_cutoff`, samples at or below `min_density`
+  are skipped, and leftover light shows `background_color`.
+- Why not the textbook `color * density * alpha`: alpha is itself ~density, so brightness
+  went as density^2 and faint zones vanished, and absorption scaled the light along with the
+  opacity, so lowering it made the cloud darker. Brightness is the exposure knob now; it is
+  linear, so zone-to-zone ratios hold until a pixel clips at 1.
+- Low absorption means rays rarely reach `opacity_cutoff`, so they march their whole bounds:
+  n = 3 orbitals (14 A bounds) take ~10.5 ms per frame at step 0.02, n = 2 ~6.3 ms, 1s ~2 ms.
 - Kernel code uses `f32` / `u32` / ... from `common.h`, not `float`, and Eigen
   (`Eigen::Vector3f`, `.dot()`, `.norm()`, `.normalized()`) for vector maths -- the same
   types as the host side.
@@ -205,7 +214,9 @@ GameEngine doesn't yet support everything ElectronCloud needs, so it is develope
 - A "Debug" ImGui panel below the FPS counter has an orbital dropdown listing every orbital
   with a wave function (`hasWaveFunction`); picking one sets `atom.states[0]` to its
   `|n l m>` (`quantumNumbersOf`) and `bounds_radius` to fit the shell
-  (`boundsRadiusFor`: 2.5 / 7.5 / 14 A for n = 1 / 2 / 3). Release mouse-look (ESC) to use it.
+  (`boundsRadiusFor`: 2.5 / 7.5 / 14 A for n = 1 / 2 / 3). Below it, logarithmic Brightness
+  and Absorption sliders edit the State's `appearance` and push it with `setAppearance`.
+  Release mouse-look (ESC) to use it.
 - An FPS counter (ImGui, through the engine's `DebugUI`) is drawn in the top-left corner as
   the Presenter's overlay. `DebugUI` starts hidden, so the State's constructor calls
   `setVisible(true)`. The number is ImGui's 60-frame average; with vsync it caps at the

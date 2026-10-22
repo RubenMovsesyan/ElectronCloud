@@ -49,11 +49,18 @@ struct RaymarchSettings {
     f32 opacity_cutoff = 0.95f; // a ray stops once this opaque; nothing behind it would show
 };
 
-// Purely cosmetic: how density turns into colour.
+// Purely cosmetic: how density turns into colour. Emission and absorption are separate, and
+// both are linear in density:
+//   - each step gives off brightness * density * step_size of cloud_color, dimmed by however
+//     much of it the cloud in front blocks;
+//   - each step blocks 1 - exp(-density * step_size * absorption) of the light behind it.
+// With absorption 0 a pixel is brightness * (the total density along its ray) -- the most
+// faithful picture of the probability; raising it lets the front of the cloud hide the back.
 struct Appearance {
-    Eigen::Vector3f cloud_color{0.3f, 0.6f, 1.0f};        // colour of density 1; scaled by density per sample
+    Eigen::Vector3f cloud_color{0.3f, 0.6f, 1.0f};        // light given off per unit of density
     Eigen::Vector3f background_color{0.02f, 0.02f, 0.03f}; // shows through wherever the cloud isn't opaque
-    f32 absorption = 10.0f; // Beer-Lambert strength: a sample is 1 - exp(-density * step_size * absorption) opaque
+    f32 absorption = 0.5f;                                 // how strongly density blocks the light behind it
+    f32 brightness = 1.5f;                                 // how much light density gives off; scales the image linearly
 };
 
 // Where the rays start and how they fan out. Built by the renderer from the engine's Camera
@@ -89,8 +96,8 @@ static_assert(sizeof(Eigen::Vector3f) == 12, "Eigen::Vector3f must be three pack
 static_assert(sizeof(RayCamera) == 56, "RayCamera layout changed");
 static_assert(sizeof(Atom) == 68, "Atom layout changed");
 static_assert(sizeof(RaymarchSettings) == 16, "RaymarchSettings layout changed");
-static_assert(sizeof(Appearance) == 28, "Appearance layout changed");
-static_assert(offsetof(RaymarchParams, density_scale) == 168, "RaymarchParams layout changed");
+static_assert(sizeof(Appearance) == 32, "Appearance layout changed");
+static_assert(offsetof(RaymarchParams, density_scale) == 172, "RaymarchParams layout changed");
 static_assert(offsetof(RaymarchParams, time) == 176, "RaymarchParams layout changed");
 static_assert(sizeof(RaymarchParams) == 192, "RaymarchParams layout changed");
 

@@ -100,7 +100,7 @@ void frame(app::Context&amp; context) {
 <p>
   The renderer also takes <code>RaymarchSettings</code> (<code>step_size</code>,
   <code>max_distance</code>, <code>min_density</code>, <code>opacity_cutoff</code>) and a purely
-  cosmetic <code>Appearance</code> (cloud colour, background colour, absorption). All of these
+  cosmetic <code>Appearance</code> (cloud colour, background colour, absorption, brightness). All of these
   live in <code>raymarch_params.h</code> and are the same types on the CPU and in the CUDA
   kernel (Eigen included); the kernel receives them by value in one
   <code>RaymarchParams</code>.
@@ -126,14 +126,18 @@ void frame(app::Context&amp; context) {
     }
 }</code></pre>
 <p>
-  Each sample absorbs light (Beer-Lambert) and is blended front to back, so the cloud
-  reads as a cloud: denser parts are brighter and more opaque, and the ray stops once it
-  reaches <code>opacity_cutoff</code>.
+  Density is scaled so each orbital peaks at 1, then blended front to back as emission and
+  absorption, kept separate and both linear in density. Each sample gives off light in
+  proportion to its density (<code>brightness</code> scales it, like exposure), dimmed by
+  what the cloud in front has already blocked, and blocks some of the light behind it
+  (<code>absorption</code>, Beer-Lambert). With absorption 0 a pixel is the total
+  probability along its ray; higher absorption lets the front hide the back. Both are
+  sliders in the debug panel.
 </p>
-<pre><code>const f32 alpha = 1.0f - expf(-density * march.step_size * appearance.absorption);
+<pre><code>const f32 transmittance = 1.0f - accumulated_opacity;
+accumulated_color += appearance.cloud_color * (appearance.brightness * density * march.step_size * transmittance);
 
-const f32 transmittance = 1.0f - accumulated_opacity;
-accumulated_color += appearance.cloud_color * (density * transmittance * alpha);
+const f32 alpha = 1.0f - expf(-density * march.step_size * appearance.absorption);
 accumulated_opacity += transmittance * alpha;</code></pre>
 <p>
   CUDA can only share <strong>buffers</strong> with Vulkan in this engine, not images, so the
