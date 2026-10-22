@@ -16,6 +16,8 @@ src/                  ElectronCloud's own code; src/main.cpp is the entry point
   renderer/           ElectronCloudRenderer: C++, its CUDA kernels (.cu), the params struct
                       both share (raymarch_params.h), and shaders/ (sokol-shdc GLSL)
 docs/                 HTML docs (dark mode), docs/index.html is the overview
+  media/              example recordings (.mp4) and their README GIF previews
+README.md             the GitHub front page: example videos, what it draws, how to run it
 ```
 
 ## Building
