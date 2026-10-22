@@ -7,6 +7,7 @@
 #include <renderer/electron_cloud_renderer.hpp>
 #include <renderer/hydrogen.hpp>
 #include <renderer/orbital.hpp>
+#include <renderer/orbital_color.hpp>
 #include <renderer/transition.hpp>
 
 #include <common.h>
@@ -116,9 +117,10 @@ struct ElectronCloud {
         // none is playing.
         f64 simulation_time = 0.0;
 
-        // How the cloud looks; brightness and absorption are tunable from the debug panel.
+        // How the cloud looks; brightness and absorption are tunable from the debug panel, and
+        // cloud_color follows the orbital (orbital_color.hpp) every frame.
         renderer::Appearance appearance{
-            .cloud_color = {0.3f, 0.6f, 1.0f},
+            .cloud_color = renderer::orbitalColor(renderer::Orbital::S1),
             .background_color = {0.02f, 0.02f, 0.03f},
             .absorption = 0.5f,
             .brightness = 1.5f,
@@ -151,6 +153,7 @@ struct ElectronCloud {
             camera.setAspectRatio(aspectOf(context));
             flyCamera(context, dt);
             advanceTransition(dt);
+            updateCloudColor();
 
             renderer.beginFrame(camera, simulation_time);
             renderer.submit(atom);
@@ -214,6 +217,24 @@ struct ElectronCloud {
             }
         }
 
+        // The current orbital's colour; during a transition, a fade from the start orbital's
+        // hue to the target's by the target's population -- the same fraction the density has
+        // moved -- so colour and shape arrive together.
+        void updateCloudColor() {
+            const Eigen::Vector3f color = transition ? renderer::blendOrbitalColors(transition->from, transition->to, atom.superposition.b)
+                                                     : renderer::orbitalColor(currentOrbital());
+            if (color != appearance.cloud_color) {
+                appearance.cloud_color = color;
+                renderer.setAppearance(appearance);
+            }
+        }
+
+        // An orbital's colour as an ImGui text colour, so the menus show which is which.
+        static ImVec4 orbitalTextColor(renderer::Orbital orbital) {
+            const Eigen::Vector3f color = renderer::orbitalColor(orbital);
+            return ImVec4(color.x(), color.y(), color.z(), 1.0f);
+        }
+
         void cancelTransition() {
             if (transition) {
                 const renderer::Orbital from = transition->from;
@@ -248,7 +269,10 @@ struct ElectronCloud {
                             continue;
                         }
                         const bool selected = orbital == current;
-                        if (ImGui::Selectable(renderer::orbitalName(orbital), selected)) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, orbitalTextColor(orbital));
+                        const bool clicked = ImGui::Selectable(renderer::orbitalName(orbital), selected);
+                        ImGui::PopStyleColor();
+                        if (clicked) {
                             selectOrbital(orbital);
                         }
                         if (selected) {
@@ -310,7 +334,10 @@ struct ElectronCloud {
                     char item[64];
                     transitionLabel(item, sizeof(item), current, orbital);
                     const bool selected = orbital == transition_target;
-                    if (ImGui::Selectable(item, selected)) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, orbitalTextColor(orbital));
+                    const bool clicked = ImGui::Selectable(item, selected);
+                    ImGui::PopStyleColor();
+                    if (clicked) {
                         transition_target = orbital;
                     }
                     if (selected) {

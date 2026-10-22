@@ -166,6 +166,11 @@ accumulated_opacity += transmittance * alpha;</code></pre>
   times, shown over however many seconds you choose.
 </p>
 <p>
+  Each orbital has its own colour, spaced evenly round the hue wheel; during a transition the
+  colour turns from the start orbital&rsquo;s hue to the target&rsquo;s (the shorter way round)
+  as the population moves, so colour and shape arrive together.
+</p>
+<p>
   Dipoles are integrated numerically from the same wave functions the renderer draws, so the
   flags are exact for these orbitals. Forbidden transitions (dipole 0) would never happen with
   light; they are animated as if the dipole were 1 e a0 and marked in the menu.

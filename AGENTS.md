@@ -136,6 +136,14 @@ the way.
 - Too many sloshes for the playback time alias into flicker; the panel warns when there are
   fewer than ~4 frames per slosh.
 
+Colours (`src/renderer/orbital_color.hpp`, cosmetic, host-side): every orbital with a wave
+function gets a hue spaced evenly round the wheel in `Orbital` order (1s red ... 3d_x^2-y^2
+pink; HSV saturation 0.7, value 1). The State sets `appearance.cloud_color` every frame
+(`updateCloudColor`): the current orbital's colour, or during a transition
+`blendOrbitalColors(from, to, b)` -- the hue turned the shorter way round the wheel by the
+target's population, so colour and density arrive together (an RGB blend would go grey).
+The orbital names in both dropdowns are drawn in their colours.
+
 - `hydrogen.hpp` is `__host__ __device__` (`HYDROGEN_HD`), so the same code runs in the
   kernel and on the CPU -- that is how it was checked: every orbital integrates to 1,
   different orbitals are orthogonal, and GPU renders match a CPU march pixel for pixel.
