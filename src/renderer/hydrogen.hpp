@@ -54,6 +54,11 @@ HYDROGEN_HD inline Spherical toSpherical(const Eigen::Vector3f& offset) {
     return Spherical{r, cos_theta, sin_theta, cos_phi, sin_phi};
 }
 
+// Whether waveFunction() implements `orbital` (everything up to n = 3 so far).
+constexpr bool hasWaveFunction(Orbital orbital) {
+    return static_cast<u32>(orbital) <= static_cast<u32>(Orbital::D3x2_y2);
+}
+
 // psi for `orbital` at `point`, with a = a0 / Z in world units. 0 for orbitals not implemented
 // yet (n = 4) and for Orbital::Count. m -> real orbital follows the convention in orbital.hpp:
 // m > 0 is the cos(|m| phi) one, m < 0 the sin(|m| phi) one.

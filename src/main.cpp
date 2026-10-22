@@ -5,6 +5,8 @@
 #include <graphics/presenter.hpp>
 #include <graphics/primitives/scene/camera.hpp>
 #include <renderer/electron_cloud_renderer.hpp>
+#include <renderer/hydrogen.hpp>
+#include <renderer/orbital.hpp>
 
 #include <common.h>
 
@@ -19,9 +21,11 @@
 #include <cmath>
 
 // ElectronCloud: our own CUDA ray marcher (src/renderer/) plugged into GameEngine's Presenter,
-// with a fly camera marking where the rays start and an FPS counter in the top-left corner.
+// with a fly camera marking where the rays start, an FPS counter in the top-left corner and a
+// debug panel to pick the orbital.
 //
-//   WASD move, Space / Left Ctrl up / down, ESC toggles mouse-look.
+//   WASD move, Space / Left Ctrl up / down, ESC toggles mouse-look (release it to use the
+//   debug panel).
 
 namespace {
 
@@ -45,6 +49,17 @@ f32 aspectOf(const app::Context& context) {
 
 // A small see-through panel pinned to the top-left corner. ImGui's Framerate is averaged over
 // the last 60 frames, so the number is steady enough to read.
+// How far out from the nucleus to march for an orbital of shell n, in angstroms (a0 = 0.529).
+// Each covers where that shell's |psi|^2 stays above min_density (0.001) -- ~2.0 A for n = 1,
+// ~4.5 A for n = 2, ~7 A for n = 3 -- with some margin.
+f32 boundsRadiusFor(i32 n) {
+    switch (n) {
+        case 1: return 2.5f;
+        case 2: return 6.0f;
+        default: return 9.0f;
+    }
+}
+
 void drawFpsCounter() {
     constexpr f32 kMargin = 10.0f;
     constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
@@ -115,8 +130,51 @@ struct ElectronCloud {
             renderer.beginFrame(camera, simulation_time);
             renderer.submit(atom);
             presenter.present(renderer, [&]() {
-                context.debugUI().draw(context.width(), context.height(), dt, sapp_dpi_scale(), drawFpsCounter);
+                context.debugUI().draw(context.width(), context.height(), dt, sapp_dpi_scale(), [&]() {
+                    drawFpsCounter();
+                    drawDebugPanel();
+                });
             });
+        }
+
+        // Shows `selected` from now on: the atom's (only) state becomes its |n l m>, and the
+        // bounds grow or shrink to fit the shell.
+        void selectOrbital(renderer::Orbital selected) {
+            const renderer::QuantumNumbers numbers = renderer::quantumNumbersOf(selected);
+            atom.states[0].n = numbers.n;
+            atom.states[0].l = numbers.l;
+            atom.states[0].m = numbers.m;
+            atom.state_count = 1;
+            atom.bounds_radius = boundsRadiusFor(numbers.n);
+        }
+
+        // Below the FPS counter: an orbital dropdown, one at a time, listing only the orbitals
+        // that have a wave function.
+        void drawDebugPanel() {
+            ImGui::SetNextWindowPos(ImVec2(10.0f, 50.0f), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Debug", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                const auto& state = atom.states[0];
+                const renderer::Orbital current = renderer::orbitalFor(state.n, state.l, state.m).value_or(renderer::Orbital::Count);
+                if (ImGui::BeginCombo("Orbital", renderer::orbitalName(current))) {
+                    for (u32 i = 0; i < static_cast<u32>(renderer::Orbital::Count); i++) {
+                        const auto orbital = static_cast<renderer::Orbital>(i);
+                        if (!renderer::hasWaveFunction(orbital)) {
+                            continue;
+                        }
+                        const bool selected = orbital == current;
+                        if (ImGui::Selectable(renderer::orbitalName(orbital), selected)) {
+                            selectOrbital(orbital);
+                        }
+                        if (selected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                const renderer::QuantumNumbers numbers = renderer::quantumNumbersOf(current);
+                ImGui::Text("n = %d, l = %d, m = %d", numbers.n, numbers.l, numbers.m);
+            }
+            ImGui::End();
         }
 
         // Same controls as GameEngine's sandboxes.

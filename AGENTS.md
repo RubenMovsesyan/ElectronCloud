@@ -193,6 +193,10 @@ GameEngine doesn't yet support everything ElectronCloud needs, so it is develope
 - `GAMEENGINE_CUDA` changes the layout of engine classes (`gpu::SharedInstanceBuffer`), and
   buildcpp does not rebuild on flag changes. After toggling it or any other compile flag,
   `./run clean`.
+- A "Debug" ImGui panel below the FPS counter has an orbital dropdown listing every orbital
+  with a wave function (`hasWaveFunction`); picking one sets `atom.states[0]` to its
+  `|n l m>` (`quantumNumbersOf`) and `bounds_radius` to fit the shell
+  (`boundsRadiusFor`: 2.5 / 6 / 9 A for n = 1 / 2 / 3). Release mouse-look (ESC) to use it.
 - An FPS counter (ImGui, through the engine's `DebugUI`) is drawn in the top-left corner as
   the Presenter's overlay. `DebugUI` starts hidden, so the State's constructor calls
   `setVisible(true)`. The number is ImGui's 60-frame average; with vsync it caps at the
