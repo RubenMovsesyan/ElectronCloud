@@ -20,6 +20,7 @@
 
 #include <cuda.h>
 
+#include <array>
 #include <optional>
 
 namespace renderer {
@@ -58,8 +59,10 @@ class ElectronCloudRenderer {
         void beginFrame(const graphics::primitives::scene::Camera& camera, f64 time);
 
         // The frame's scene: the atom whose electron cloud the rays march through.
-        // Also rescales density so the atom's orbital peaks at 1 -- recomputed (~0.3 ms, on the
-        // CPU) only when the orbital or the scaled Bohr radius changes.
+        // Also rescales density so the cloud peaks at about 1: by the orbital's peak |psi|^2 for
+        // one state, and by a log-space blend of the two peaks (peak_A^a * peak_B^b, weighted by
+        // the populations) during a transition, which matches each end exactly. Each orbital's peak is found once (~0.3 ms,
+        // on the CPU) and cached until the scaled Bohr radius changes.
         void submit(const Atom& atom);
 
         // Marches the rays at width x height pixels and returns a view of the image. Does not
@@ -75,9 +78,11 @@ class ElectronCloudRenderer {
 
         RaymarchParams m_params; // everything the kernel gets, kept current by the calls above
 
-        // What m_params.density_scale was computed for; Count = nothing yet.
-        Orbital m_scaled_orbital = Orbital::Count;
-        f32 m_scaled_a = 0.0f;
+        // peakDensity() of each orbital at m_peaks_a; negative = not computed yet. One extra slot
+        // for Orbital::Count (no wave function, peak 0).
+        f32 peakOf(Orbital orbital, f32 a);
+        std::array<f32, static_cast<u32>(Orbital::Count) + 1> m_peaks{};
+        f32 m_peaks_a = 0.0f;
 
         // Released explicitly in the destructor, before the Vulkan buffer and semaphores it
         // imported are destroyed.

@@ -115,16 +115,33 @@ void ElectronCloudRenderer::submit(const Atom& atom) {
     m_params.atom = atom;
     m_params.atom.state_count = std::clamp<u32>(atom.state_count, 1, static_cast<u32>(atom.states.size()));
 
-    // The peak depends only on the orbital and a, so it's found once per change, not per frame.
-    const QuantumState& state = atom.states[0];
-    const Orbital orbital = orbitalFor(state.n, state.l, state.m).value_or(Orbital::Count);
+    auto orbitalOf = [](const QuantumState& state) { return orbitalFor(state.n, state.l, state.m).value_or(Orbital::Count); };
     const f32 a = atom.bohr_radius / atom.nuclear_charge;
-    if (orbital != m_scaled_orbital || a != m_scaled_a) {
-        const f32 peak = peakDensity(orbital, a);
-        m_params.density_scale = peak > 0.0f ? 1.0f / peak : 0.0f;
-        m_scaled_orbital = orbital;
-        m_scaled_a = a;
+
+    f32 peak = peakOf(orbitalOf(atom.states[0]), a);
+    if (m_params.atom.state_count == 2) {
+        // Blend the two peaks in log space (peak_A^a * peak_B^b), like a camera's exposure
+        // easing between two scenes: exact at both ends, and it brightens steadily. Blending
+        // linearly stays pinned to the larger peak (1s's is ~60x 2p's) until B is almost fully
+        // populated, so B would stay invisible and then pop in at the end.
+        const Superposition& w = atom.superposition;
+        const f32 peak_b = peakOf(orbitalOf(atom.states[1]), a);
+        peak = peak > 0.0f && peak_b > 0.0f ? expf(w.a * logf(peak) + w.b * logf(peak_b)) : fmaxf(peak, peak_b);
     }
+    m_params.density_scale = peak > 0.0f ? 1.0f / peak : 0.0f;
+}
+
+f32 ElectronCloudRenderer::peakOf(Orbital orbital, f32 a) {
+    // Peaks depend on a, so a new a invalidates them all.
+    if (a != m_peaks_a) {
+        m_peaks.fill(-1.0f);
+        m_peaks_a = a;
+    }
+    f32& peak = m_peaks[static_cast<u32>(orbital)];
+    if (peak < 0.0f) {
+        peak = peakDensity(orbital, a);
+    }
+    return peak;
 }
 
 bool ElectronCloudRenderer::rebuildTargets(int width, int height) {

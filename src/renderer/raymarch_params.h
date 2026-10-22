@@ -20,25 +20,34 @@
 
 namespace renderer {
 
-// One hydrogen-like eigenstate |n l m>, weighted by amplitude * e^(i * phase).
+// One hydrogen-like eigenstate |n l m> (a real orbital; see orbital.hpp for the m convention).
 struct QuantumState {
     i32 n = 1; // principal, >= 1
     i32 l = 0; // azimuthal, 0 .. n-1
     i32 m = 0; // magnetic, -l .. l
-    f32 amplitude = 1.0f;
-    f32 phase = 0.0f; // radians, at time 0
+};
+
+// How a two-state superposition Psi = c_A psi_A e^(-i E_A t) + c_B psi_B e^(-i E_B t) turns
+// into density at one moment: |Psi|^2 = a psi_A^2 + b psi_B^2 + interference psi_A psi_B.
+// Every term is real because the orbitals are real; the CPU works the weights out from the
+// time (transition.hpp) so the kernel never sees the phases. A single state is {1, 0, 0}.
+struct Superposition {
+    f32 a = 1.0f;            // |c_A|^2, the population of states[0]
+    f32 b = 0.0f;            // |c_B|^2, the population of states[1]
+    f32 interference = 0.0f; // 2 Re[c_A* c_B e^(-i (E_B - E_A) t)]; what makes the cloud slosh
 };
 
 // A nucleus and the electron's state around it -- everything the cloud's density depends
 // on. A transition between energy levels is a superposition of its start and end states
-// (state_count = 2) whose amplitudes the app moves over time.
+// (state_count = 2) whose weights the app moves over time.
 struct Atom {
     Eigen::Vector3f nucleus = Eigen::Vector3f::Zero(); // world space
     f32 nuclear_charge = 1.0f;                          // Z: 1 = hydrogen; hydrogen-like ions above that
     f32 bohr_radius = 0.529f;                           // world units per Bohr radius; 0.529 = world units are angstroms
     f32 bounds_radius = 2.5f;                           // world units around the nucleus; density is 0 outside
     std::array<QuantumState, 2> states{};
-    u32 state_count = 1; // 1 or 2
+    u32 state_count = 1; // 1 = states[0] alone; 2 = a superposition weighted by `superposition`
+    Superposition superposition;
 };
 
 // How rays are marched: quality against speed. Doesn't change what the cloud is.
@@ -94,10 +103,10 @@ struct RaymarchParams {
 // field changes.
 static_assert(sizeof(Eigen::Vector3f) == 12, "Eigen::Vector3f must be three packed f32");
 static_assert(sizeof(RayCamera) == 56, "RayCamera layout changed");
-static_assert(sizeof(Atom) == 68, "Atom layout changed");
+static_assert(sizeof(Atom) == 64, "Atom layout changed");
 static_assert(sizeof(RaymarchSettings) == 16, "RaymarchSettings layout changed");
 static_assert(sizeof(Appearance) == 32, "Appearance layout changed");
-static_assert(offsetof(RaymarchParams, density_scale) == 172, "RaymarchParams layout changed");
+static_assert(offsetof(RaymarchParams, density_scale) == 168, "RaymarchParams layout changed");
 static_assert(offsetof(RaymarchParams, time) == 176, "RaymarchParams layout changed");
 static_assert(sizeof(RaymarchParams) == 192, "RaymarchParams layout changed");
 

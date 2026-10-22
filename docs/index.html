@@ -18,6 +18,7 @@
   <a href="index.html#layout">Layout</a>
   <a href="index.html#build">Building</a>
   <a href="index.html#renderer">The renderer</a>
+  <a href="index.html#transitions">Transitions</a>
   <a href="index.html#engine">Working on GameEngine</a>
 </nav>
 
@@ -78,21 +79,21 @@ docs/                 these pages</code></pre>
 };</code></pre>
 <p>
   It is a CUDA ray marcher. The State owns a fly <code>Camera</code> (WASD, Space/Ctrl,
-  ESC toggles mouse-look), the <code>renderer::Atom</code> whose cloud is drawn, and a
-  simulation clock in atomic units of time:
+  ESC toggles mouse-look), the <code>renderer::Atom</code> whose cloud is drawn, and the
+  transition between two orbitals that may be playing:
 </p>
 <pre><code>renderer::Atom atom{
     .nucleus = Eigen::Vector3f::Zero(),
     .nuclear_charge = 1.0f,     // Z
-    .bohr_radius = 0.1f,        // world units per Bohr radius
-    .bounds_radius = 1.5f,      // density is 0 outside; rays are only marched inside
-    .states = {renderer::QuantumState{.n = 1, .l = 0, .m = 0, .amplitude = 1.0f, .phase = 0.0f}},
-    .state_count = 1,           // 2 = a superposition, for transitions between levels
+    .bohr_radius = 0.529f,      // world units per Bohr radius: world units are angstroms
+    .bounds_radius = 2.5f,      // density is 0 outside; rays are only marched inside
+    .states = {renderer::QuantumState{.n = 1, .l = 0, .m = 0}},
+    .state_count = 1,           // 2 = a transition in progress, weighted by .superposition
 };
 
 void frame(app::Context&amp; context) {
     ...
-    simulation_time += dt * kAtomicTimePerSecond;   // atomic units (hbar / E_h) per real second
+    advanceTransition(dt);   // sets atom.superposition for this moment of the transition
     renderer.beginFrame(camera, simulation_time);
     renderer.submit(atom);
     presenter.present(renderer, overlay);
@@ -146,6 +147,28 @@ accumulated_opacity += transmittance * alpha;</code></pre>
   returns. Two timeline semaphores keep CUDA and Vulkan off the buffer at the same time:
   CUDA waits for the previous frame&rsquo;s copy to finish before writing, and the copy waits
   for CUDA. CUDA runs on the render thread, inside <code>render()</code>.
+</p>
+
+<h2 id="transitions">Transitions</h2>
+<p>
+  The debug panel can drive the electron from the current orbital to another with resonant
+  light (a Rabi oscillation). In atomic units, with the light polarised along the transition
+  dipole <code>d</code> and field <code>E0</code> (from the laser intensity):
+</p>
+<pre><code>c_A = cos(&Omega;t/2),   c_B = -i sin(&Omega;t/2),   &Omega; = |d| E0,   &omega;0 = E_B - E_A
+|&Psi;|&sup2; = cos&sup2;(&Omega;t/2) &psi;_A&sup2; + sin&sup2;(&Omega;t/2) &psi;_B&sup2; - sin(&Omega;t) sin(&omega;0 t) &psi;_A &psi;_B</code></pre>
+<p>
+  The CPU turns that into three weights each frame; the kernel evaluates both wave functions
+  and combines them. The last term makes the cloud slosh at &omega;0 &mdash; the oscillating
+  dipole that absorbs the light &mdash; |&omega;0|/(2&Omega;) times before the transition ends
+  at t = &pi;/&Omega; with the electron entirely in B. All of it is physical except the
+  playback speed: 1s &rarr; 2p_z at 10<sup>12</sup> W/cm&sup2; takes 19 fs and sloshes 47
+  times, shown over however many seconds you choose.
+</p>
+<p>
+  Dipoles are integrated numerically from the same wave functions the renderer draws, so the
+  flags are exact for these orbitals. Forbidden transitions (dipole 0) would never happen with
+  light; they are animated as if the dipole were 1 e a0 and marked in the menu.
 </p>
 
 <h2 id="engine">Working on GameEngine</h2>

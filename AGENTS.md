@@ -70,7 +70,7 @@ like any engine renderer.
 
 It is a CUDA ray marcher through an electron cloud. The State (`ElectronCloud` in
 `src/main.cpp`) owns the `Camera` (fly controls, same as the engine sandboxes), the
-`renderer::Atom`, and a simulation clock; each frame it calls
+`renderer::Atom`, and the transition that may be playing; each frame it calls
 `renderer.beginFrame(camera, simulation_time)`, `renderer.submit(atom)`, then
 `presenter.present(renderer, overlay)`.
 
@@ -80,12 +80,12 @@ the C++ renderer and the kernel (no mirror structs, no conversion code):
 - `Atom`: everything the density depends on. Nucleus position, nuclear charge
   `Z`, `bohr_radius` (world units per Bohr radius -- the cloud's size on screen),
   `bounds_radius` (density is 0 outside; rays are only marched inside it), and up to two
-  `QuantumState`s `|n l m>` with a complex weight `amplitude * e^(i * phase)`. Two states
-  model a transition between energy levels as a superposition whose amplitudes the app
-  moves over time.
-- Simulation time: `f64`, in atomic units of time (hbar / E_h ~= 2.419e-17 s), advanced
-  by the State at `kAtomicTimePerSecond` per real second (10 today; real time would be
-  ~4.1e16). `f64` so the phases stay exact as it grows.
+  `QuantumState`s `|n l m>`. Two states (`state_count = 2`) are a transition in progress:
+  a superposition whose density is `a psi_A^2 + b psi_B^2 + interference psi_A psi_B`, with
+  the three `Superposition` weights worked out by the CPU for the current moment.
+- Simulation time: `f64`, in atomic units of time (hbar / E_h ~= 2.419e-17 s), measured
+  from the start of the current transition (0 when none is playing). The kernel doesn't use
+  it -- the weights already encode it -- but it is passed along.
 - `RaymarchSettings`: `step_size`, `max_distance`, `min_density`,
   `opacity_cutoff` -- quality against speed.
 - `Appearance`: cloud colour, background colour, absorption, brightness -- purely
@@ -102,8 +102,39 @@ The wave function, so far: `checkRay(position, atom, time)` converts the sample 
 spherical coordinates around the nucleus, looks up the orbital of `atom.states[0]` with
 `orbitalFor`, and returns `psi * psi` from `waveFunction(orbital, point, a)`
 (`src/renderer/hydrogen.hpp`, `a = bohr_radius / nuclear_charge`). Implemented for every
-orbital up to n = 3 (1s .. 3d); n = 4 and invalid quantum numbers are density 0. Not
-handled yet: `states[1]` / superpositions, `amplitude`, `phase`, and `time`.
+orbital up to n = 3 (1s .. 3d); n = 4 and invalid quantum numbers are density 0. With two
+states it evaluates both wave functions and returns `a psi_A^2 + b psi_B^2 + interference
+psi_A psi_B` (clamped at 0), so a transition costs ~2x a single orbital.
+
+Transitions (`src/renderer/transition.hpp`, CPU-only, f64, atomic units): resonant light
+polarised along the transition dipole `d` drives A -> B (Rabi oscillation):
+`c_A = cos(Omega t/2)`, `c_B = -i sin(Omega t/2)`, `Omega = |d| E0`. With `c_B` imaginary the
+interference term is `-sin(Omega t) sin(omega0 t)`, `omega0 = E_B - E_A` (`E_n = -Z^2/(2n^2)`)
+-- not `2 c_A c_B cos(omega0 t)`, which only holds for real amplitudes. The transition ends
+at `t = pi / Omega` with everything in B; the cloud sloshes `|omega0| / (2 Omega)` times on
+the way.
+
+- Everything is physical except playback speed: the laser intensity (W/cm^2, debug panel,
+  default 1e12) gives `E0`, the dipole gives `Omega`, so the real duration and the number of
+  sloshes follow (1s -> 2p_z at 1e12 W/cm^2: 19 fs, 47 sloshes; ~1/sqrt(intensity)). The
+  chosen playback seconds only map that real time onto the screen.
+- `DipoleTable` integrates `<A|r|B>` numerically from `hydrogen.hpp` once (~0.2 s, built in
+  the State's constructor) for every pair with `l` differing by 1 (all others are 0 by the
+  angular-momentum rule). It matches the textbook values (`<1s|z|2p_z>` = 0.745,
+  `<2s|z|2p_z>` = 3.00, `<2p_z|z|3d_z2>` = 2.45). Allowed = non-zero dipole; this gets
+  real-orbital cases right that `|Delta m| <= 1` on the m labels doesn't (2p_x -> 3d_xy
+  allowed, 2p_z -> 3d_x^2-y^2 forbidden).
+- Forbidden transitions (dipole 0) would never happen with light; they are animated as if
+  the dipole were `kForbiddenStandInDipole` (1 e a0) and flagged in the UI. Same-shell
+  pairs (e.g. 2s -> 2p) have `omega0 = 0`: they transition but don't slosh ("dE = 0").
+- Density scale during a transition blends the two peaks in **log space**
+  (`peak_A^a * peak_B^b`): exact at both ends, one scale per frame. A linear blend stays
+  pinned to the bigger peak (1s is ~60x 2p), so B stayed invisible and popped in at the end.
+- At the end the State switches to B alone, which is exactly what the superposition is at
+  `t = pi / Omega` -- the last transition frame and the first single-state frame match
+  pixel for pixel. Bounds during a transition are the larger of the two shells'.
+- Too many sloshes for the playback time alias into flicker; the panel warns when there are
+  fewer than ~4 frames per slosh.
 
 - `hydrogen.hpp` is `__host__ __device__` (`HYDROGEN_HD`), so the same code runs in the
   kernel and on the CPU -- that is how it was checked: every orbital integrates to 1,
@@ -214,7 +245,11 @@ GameEngine doesn't yet support everything ElectronCloud needs, so it is develope
 - A "Debug" ImGui panel below the FPS counter has an orbital dropdown listing every orbital
   with a wave function (`hasWaveFunction`); picking one sets `atom.states[0]` to its
   `|n l m>` (`quantumNumbersOf`) and `bounds_radius` to fit the shell
-  (`boundsRadiusFor`: 2.5 / 7.5 / 14 A for n = 1 / 2 / 3). Below it, logarithmic Brightness
+  (`boundsRadiusFor`: 2.5 / 7.5 / 14 A for n = 1 / 2 / 3). Below it, the transition
+  controls: a target (every orbital, flagged "(forbidden)" or "(dE = 0)"), playback seconds,
+  laser intensity, what the physics says about it (dipole, real duration, sloshes), and
+  Start; while one plays, a progress bar, the populations and Cancel (back to the start
+  orbital). The orbital dropdown is disabled during a transition. Then logarithmic Brightness
   and Absorption sliders edit the State's `appearance` and push it with `setAppearance`.
   Release mouse-look (ESC) to use it.
 - An FPS counter (ImGui, through the engine's `DebugUI`) is drawn in the top-left corner as

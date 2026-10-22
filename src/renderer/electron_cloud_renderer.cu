@@ -32,22 +32,33 @@ __device__ bool raySphere(const Vector3f& origin, const Vector3f& direction, con
     return far > 0.0f;
 }
 
-// The electron cloud's density -- |psi|^2 -- at world-space `position` and simulation `time`
-// (atomic units). The sample is converted to spherical coordinates around the nucleus, the
-// orbital comes from the atom's first state's quantum numbers, and hydrogen.hpp's
-// waveFunction() gives psi for it. Implemented up to n = 3; n = 4 orbitals and invalid
-// quantum numbers are empty space.
+__device__ Orbital orbitalOf(const QuantumState& state) {
+    return orbitalFor(state.n, state.l, state.m).value_or(Orbital::Count);
+}
+
+// The electron cloud's density -- |Psi|^2 -- at world-space `position`. The sample is
+// converted to spherical coordinates around the nucleus and hydrogen.hpp's waveFunction()
+// gives psi for each state (up to n = 3; n = 4 and invalid quantum numbers are empty space).
 //
-// `time` isn't used yet: a single stationary state's |psi|^2 doesn't change with time.
+// One state: psi_A^2. Two (a transition): a psi_A^2 + b psi_B^2 + interference psi_A psi_B,
+// with the weights already worked out on the CPU for this moment (transition.hpp), which is
+// why `time` isn't needed here. The second wave function is only evaluated during a
+// transition.
 __device__ f32 checkRay(const Vector3f& position, const Atom& atom, f64 time) {
     (void)time;
 
     const Spherical point = toSpherical(position - atom.nucleus);
     const f32 a = atom.bohr_radius / atom.nuclear_charge;
 
-    const QuantumState& state = atom.states[0];
-    const f32 psi = waveFunction(orbitalFor(state.n, state.l, state.m).value_or(Orbital::Count), point, a);
-    return psi * psi; // real orbitals: |psi|^2 = psi^2
+    const f32 psi_a = waveFunction(orbitalOf(atom.states[0]), point, a);
+    if (atom.state_count < 2) {
+        return psi_a * psi_a; // real orbitals: |psi|^2 = psi^2
+    }
+
+    const f32 psi_b = waveFunction(orbitalOf(atom.states[1]), point, a);
+    const Superposition& w = atom.superposition;
+    // Exactly >= 0 in theory; clamp the rounding.
+    return fmaxf(0.0f, w.a * psi_a * psi_a + w.b * psi_b * psi_b + w.interference * psi_a * psi_b);
 }
 
 __device__ u32 packRgba8(const Vector3f& color) {
